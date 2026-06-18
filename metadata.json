@@ -1,0 +1,6 @@
+{
+  "name": "FIRJAN OneHub",
+  "description": "Hub corporativo integrado de gestão administrativa, operacional, educacional e estratégica para a Firjan, SESI, SENAI e IEL.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
