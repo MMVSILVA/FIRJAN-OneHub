@@ -3452,6 +3452,81 @@ export default function App() {
               </motion.p>
             )}
 
+            {/* QUICK PRE-FILL CREDENTIALS SECTION FOR DEMO / EASY TESTING */}
+            <div className={`w-full border-t mt-6 pt-5 ${
+              theme === "dark" ? "border-purple-950/40" : "border-slate-150"
+            }`}>
+              <p className={`text-[9px] uppercase font-mono font-bold tracking-widest text-center mb-3 ${
+                theme === "dark" ? "text-purple-400" : "text-purple-650"
+              }`}>
+                Acesso Rápido para Testes (Clique para Preencher)
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  {
+                    name: "Marília Moreira",
+                    role: "Orçamento",
+                    email: "mmbrito@firjan.com.br",
+                    token: "FIRJAN-MMB-6834",
+                    color: "from-blue-500/10 to-blue-500/5 hover:from-blue-500/20 dark:from-blue-500/10 dark:to-blue-500/5 dark:hover:from-blue-500/20 hover:border-blue-500/30"
+                  },
+                  {
+                    name: "Tatiane Rocha",
+                    role: "Gestor Geral",
+                    email: "ttrocha@firjan.com.br",
+                    token: "FIRJAN-TTR-9428",
+                    color: "from-amber-500/10 to-amber-500/5 hover:from-amber-500/20 dark:from-amber-500/10 dark:to-amber-500/5 dark:hover:from-amber-500/20 hover:border-amber-500/30"
+                  },
+                  {
+                    name: "Thais Ferreira",
+                    role: "Manutenção",
+                    email: "tnferreira@firjan.com.br",
+                    token: "FIRJAN-TNF-2105",
+                    color: "from-emerald-500/10 to-emerald-500/5 hover:from-emerald-500/20 dark:from-emerald-500/10 dark:to-emerald-500/5 dark:hover:from-emerald-500/20 hover:border-emerald-500/30"
+                  },
+                  {
+                    name: "Acrislei Araujo",
+                    role: "Faturamento",
+                    email: "adivino@firjan.com.br",
+                    token: "FIRJAN-ASD-4792",
+                    color: "from-purple-500/10 to-purple-500/5 hover:from-purple-500/20 dark:from-purple-500/10 dark:to-purple-500/5 dark:hover:from-purple-500/20 hover:border-purple-500/30"
+                  }
+                ].map((user) => (
+                  <button
+                    key={user.email}
+                    onClick={() => {
+                      setEmailInput(user.email);
+                      setTokenInput(user.token);
+                      setTokenError("");
+                    }}
+                    type="button"
+                    className={`text-left p-2.5 rounded-xl border transition-all duration-200 cursor-pointer flex items-center justify-between group ${
+                      theme === "dark" 
+                        ? `bg-gradient-to-r ${user.color} border-purple-950/20 text-zinc-300` 
+                        : "bg-slate-50 hover:bg-slate-100 border-slate-150 text-slate-700"
+                    }`}
+                  >
+                    <div>
+                      <div className="text-[11px] font-black font-sans leading-none flex items-center gap-1.5">
+                        <span className={`${theme === "dark" ? "text-white" : "text-slate-900"}`}>{user.name}</span>
+                        <span className={`text-[8px] px-1 py-0.5 rounded uppercase font-mono tracking-wider scale-95 origin-left ${
+                          theme === "dark" ? "bg-zinc-800 text-purple-300" : "bg-purple-100 text-purple-700 font-bold"
+                        }`}>
+                          {user.role}
+                        </span>
+                      </div>
+                      <div className="text-[9px] font-mono text-zinc-500 dark:text-zinc-400 mt-1 leading-none">
+                        {user.email}
+                      </div>
+                    </div>
+                    <div className="text-right font-mono text-[10px] font-black tracking-wider text-zinc-500 dark:text-zinc-400 group-hover:text-purple-500 transition-colors">
+                      {user.token}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
           </motion.div>
 
         </div>
