@@ -5,15 +5,20 @@ import './index.css';
 
 // Global error overlay for debugging
 window.addEventListener('error', (event) => {
-  const errorMsg = String(event.message || event.error?.message || "");
-  if (
+  const errorMsg = String(event.message || event.error?.message || event.error || "");
+  const errorObj = event.error || {};
+  const isWS = 
     errorMsg.includes("WebSocket") || 
     errorMsg.includes("websocket") || 
     errorMsg.includes("vite") || 
     errorMsg.includes("HMR") ||
     errorMsg.includes("connection") ||
-    errorMsg.includes("closed without opened")
-  ) {
+    errorMsg.includes("closed without opened") ||
+    errorMsg.includes("[object Event]") ||
+    (event.target && event.target.constructor && event.target.constructor.name === "WebSocket") ||
+    (errorObj.target && errorObj.target.constructor && errorObj.target.constructor.name === "WebSocket");
+
+  if (isWS) {
     // Ignore benign environment/websocket errors caused by disabled dev-server HMR
     return;
   }
@@ -41,15 +46,21 @@ window.addEventListener('error', (event) => {
 });
 
 window.addEventListener('unhandledrejection', (event) => {
-  const reasonStr = String(event.reason?.message || event.reason || "");
-  if (
+  const reasonStr = String(event.reason?.message || event.reason?.stack || event.reason || "");
+  const reasonObj = event.reason || {};
+  const isWS = 
     reasonStr.includes("WebSocket") || 
     reasonStr.includes("websocket") || 
     reasonStr.includes("vite") || 
     reasonStr.includes("HMR") ||
     reasonStr.includes("connection") ||
-    reasonStr.includes("closed without opened")
-  ) {
+    reasonStr.includes("closed without opened") ||
+    reasonStr.includes("[object Event]") ||
+    (reasonObj instanceof Event) ||
+    (event.target && event.target.constructor && event.target.constructor.name === "WebSocket") ||
+    (reasonObj.target && reasonObj.target.constructor && reasonObj.target.constructor.name === "WebSocket");
+
+  if (isWS) {
     // Ignore benign environment/websocket errors caused by disabled dev-server HMR
     return;
   }

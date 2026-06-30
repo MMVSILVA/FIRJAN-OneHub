@@ -6,7 +6,8 @@ import {
 import { 
   Landmark, FileSpreadsheet, Sliders, Play, CheckCircle, Flame, CheckCircle2, 
   Search, Filter, Plus, ArrowRight, Trash2, ArrowUpDown, TrendingUp, TrendingDown, 
-  DollarSign, Calendar, UploadCloud, Sparkles, Presentation, FileText, AlertTriangle, ChevronRight, Layers, LayoutGrid
+  DollarSign, Calendar, UploadCloud, Sparkles, Presentation, FileText, AlertTriangle, ChevronRight, Layers, LayoutGrid,
+  Edit
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -108,6 +109,27 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
   const [dirFilterOrg, setDirFilterOrg] = useState<string>("TODAS");
   const [dirFilterConta, setDirFilterConta] = useState<string>("TODAS");
   const [dirFilterRazaoCC, setDirFilterRazaoCC] = useState<string>("TODOS");
+
+  // Marília CRUD States
+  const [isCrudMode, setIsCrudMode] = useState<boolean>(false);
+  const [crudSearch, setCrudSearch] = useState<string>("");
+  const [crudFilterType, setCrudFilterType] = useState<"TODOS" | "RECEITAS" | "DESPESAS" | "INVESTIMENTOS">("TODOS");
+  const [crudPage, setCrudPage] = useState<number>(1);
+  const [crudPageSize] = useState<number>(15);
+  
+  // Modal states
+  const [activeCrudModal, setActiveCrudModal] = useState<"create" | "edit" | null>(null);
+  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
+  
+  // Form states
+  const [formOrg, setFormOrg] = useState<string>("SESI");
+  const [formContaN0, setFormContaN0] = useState<string>("");
+  const [formContaN1, setFormContaN1] = useState<string>("");
+  const [formContaN2, setFormContaN2] = useState<string>("");
+  const [formCC, setFormCC] = useState<string>("");
+  const [formContaN6, setFormContaN6] = useState<string>("");
+  const [formOrigem, setFormOrigem] = useState<string>("REALIZADO");
+  const [formTotal, setFormTotal] = useState<number>(0);
 
   // Determine light mode helper
   const isL = theme === "light";
@@ -341,6 +363,49 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
 
   const orgReportData = Array.from(orgBreakdownMap.values());
 
+  // Map rawDetalhes to include absolute original index for editing
+  const rawDetalhesWithIndex = rawDetalhes.map((row, idx) => ({
+    ...row,
+    __originalIndex: idx,
+    // Extract normalized fields using candidates or fallback
+    orgVal: String(findFuzzyValue(row, ["Organização", "organizacao"]) || "").trim(),
+    catVal: String(findFuzzyValue(row, ["Conta N0", "categoria"]) || "").trim(),
+    n1Val: String(findFuzzyValue(row, ["Conta N1", "grupo_n1"]) || "").trim(),
+    n2Val: String(findFuzzyValue(row, ["Conta N2", "subgrupo_n2"]) || "").trim(),
+    ccVal: String(findFuzzyValue(row, ["Descricao Centro de Custo", "Centro de Custo"]) || "").trim(),
+    n6Val: String(findFuzzyValue(row, ["Descricao Conta N6", "Conta N6"]) || "").trim(),
+    origemVal: String(findFuzzyValue(row, ["Origem", "tipo"]) || "REALIZADO").trim().toUpperCase(),
+    totalVal: Number(String(findFuzzyValue(row, ["Total", "valor"]) || "0").replace(/[^\d.-]/g, "")) || 0
+  }));
+
+  // Filter the raw records based on search and type (Receitas, Despesas, Investimentos)
+  const filteredCrudRows = rawDetalhesWithIndex.filter(row => {
+    // 1. Text Search matching any field
+    if (crudSearch.trim()) {
+      const q = crudSearch.toLowerCase();
+      const match = 
+        row.orgVal.toLowerCase().includes(q) ||
+        row.catVal.toLowerCase().includes(q) ||
+        row.n1Val.toLowerCase().includes(q) ||
+        row.n2Val.toLowerCase().includes(q) ||
+        row.ccVal.toLowerCase().includes(q) ||
+        row.n6Val.toLowerCase().includes(q);
+      if (!match) return false;
+    }
+
+    // 2. Flow Type Filter (Receitas, Despesas, Investimentos)
+    const catUpper = row.catVal.toUpperCase();
+    if (crudFilterType === "INVESTIMENTOS") {
+      return catUpper.includes("INVESTIMENTO");
+    } else if (crudFilterType === "RECEITAS") {
+      return catUpper.includes("RECEITA") || catUpper.includes("FATURAMENTO");
+    } else if (crudFilterType === "DESPESAS") {
+      return !catUpper.includes("RECEITA") && !catUpper.includes("FATURAMENTO") && !catUpper.includes("INVESTIMENTO");
+    }
+
+    return true;
+  });
+
   // Matrix Filtered Details YTD Table Entries
   const filteredDetailsRows = rawDetalhes.filter(r => {
     const orgRaw = String(findFuzzyValue(r, ["Organização", "organizacao"]) || "").toUpperCase();
@@ -405,6 +470,62 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
   const pmoTotalSpent = costCenters.reduce((sum, cc) => sum + cc.spent, 0);
   const pmoAvailableBudget = pmoTotalAllocated - pmoTotalSpent;
   const pmoPendingRequests = budgetRequests.filter(r => r.status === "Pendente").length;
+
+  // CRUD Actions
+  const handleOpenEditModal = (row: any) => {
+    setEditingRowIndex(row.__originalIndex);
+    setFormOrg(row.orgVal || "SESI");
+    setFormContaN0(row.catVal || "");
+    setFormContaN1(row.n1Val || "");
+    setFormContaN2(row.n2Val || "");
+    setFormCC(row.ccVal || "");
+    setFormContaN6(row.n6Val || "");
+    setFormOrigem(row.origemVal || "REALIZADO");
+    setFormTotal(row.totalVal || 0);
+    setActiveCrudModal("edit");
+  };
+
+  const handleOpenCreateModal = () => {
+    setEditingRowIndex(null);
+    setFormOrg("SESI");
+    setFormContaN0("");
+    setFormContaN1("");
+    setFormContaN2("");
+    setFormCC("");
+    setFormContaN6("");
+    setFormOrigem("REALIZADO");
+    setFormTotal(0);
+    setActiveCrudModal("create");
+  };
+
+  const handleSaveCrud = () => {
+    const updatedObj: any = {
+      "Organização": formOrg,
+      "Conta N0": formContaN0,
+      "Conta N1": formContaN1,
+      "Conta N2": formContaN2,
+      "Descricao Centro de Custo": formCC,
+      "Descricao Conta N6": formContaN6,
+      "Origem": formOrigem,
+      "Total": formTotal
+    };
+
+    if (activeCrudModal === "edit" && editingRowIndex !== null) {
+      setRawDetalhes(prev => prev.map((item, idx) => idx === editingRowIndex ? { ...item, ...updatedObj } : item));
+      addToast("Lançamento Atualizado", "O registro foi atualizado com sucesso.", "success");
+    } else {
+      setRawDetalhes(prev => [updatedObj, ...prev]);
+      addToast("Lançamento Criado", "Novo registro inserido no banco de dados local.", "success");
+    }
+    setActiveCrudModal(null);
+  };
+
+  const handleDeleteCrud = (originalIndex: number) => {
+    if (window.confirm("Deseja realmente excluir este lançamento permanentemente?")) {
+      setRawDetalhes(prev => prev.filter((_, idx) => idx !== originalIndex));
+      addToast("Lançamento Excluído", "O registro foi deletado permanentemente.", "success");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -933,123 +1054,467 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                 exit={{ opacity: 0 }}
                 className="space-y-4"
               >
-                {/* Filtration bar inside drilling table */}
-                <div className={`p-4 border rounded-xl flex flex-wrap items-center justify-between gap-4 ${
-                  isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
-                }`}>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-mono text-zinc-500 block">Instituição</label>
-                      <select
-                        value={dirFilterOrg}
-                        onChange={(e) => setDirFilterOrg(e.target.value)}
-                        className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
-                          isL ? "bg-white text-slate-800" : "bg-zinc-950 text-white border-zinc-800"
-                        }`}
-                      >
-                        <option value="TODAS">TODAS AS INSTITUIÇÕES</option>
-                        <option value="SESI">SESI</option>
-                        <option value="SENAI">SENAI</option>
-                        <option value="FIRJAN">FIRJAN / OUTROS</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1">
-                      <label className="text-[9px] uppercase font-mono text-zinc-500 block">Categoria N0</label>
-                      <select
-                        value={dirFilterConta}
-                        onChange={(e) => setDirFilterConta(e.target.value)}
-                        className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
-                          isL ? "bg-white text-slate-800" : "bg-zinc-950 text-white border-zinc-800"
-                        }`}
-                      >
-                        <option value="TODAS">TODAS AS CATEGORIAS</option>
-                        <option value="PESSOAL">PESSOAL</option>
-                        <option value="SERVIÇOS DE TERCEIROS">SERVIÇOS DE TERCEIROS</option>
-                        <option value="PRODUTOS & INSUMOS">PRODUTOS & INSUMOS</option>
-                        <option value="INVESTIMENTOS">INVESTIMENTOS</option>
-                        <option value="VIAGENS & LOGÍSTICA">VIAGENS & LOGÍSTICA</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <span className="text-[10px] font-mono text-zinc-500 uppercase">
-                    Exibindo <strong>{matrixTableData.length}</strong> conta(s) cruzada(s)
-                  </span>
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-2 p-1 bg-zinc-900/40 dark:bg-zinc-950/40 rounded-xl border border-zinc-850/60 max-w-xl">
+                  <button
+                    onClick={() => setIsCrudMode(false)}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                      !isCrudMode
+                        ? "bg-purple-650 text-white shadow-md font-extrabold"
+                        : "text-zinc-400 hover:text-zinc-250"
+                    }`}
+                  >
+                    <span>📊 Visão Cruzada Consolidada (DRE)</span>
+                  </button>
+                  <button
+                    onClick={() => setIsCrudMode(true)}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                      isCrudMode
+                        ? "bg-purple-650 text-white shadow-md font-extrabold"
+                        : "text-zinc-400 hover:text-zinc-250"
+                    }`}
+                  >
+                    <span>✏️ Gerenciador CRUD de Lançamentos (Marília)</span>
+                  </button>
                 </div>
 
-                {/* Grid Table */}
-                <div className={`border rounded-xl overflow-hidden ${
-                  isC ? "border-[#FFFF00]" : "border-zinc-300 dark:border-zinc-800"
-                }`}>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs font-sans">
-                      <thead className={`font-mono text-[10px] uppercase font-bold border-b ${
-                        isL ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-zinc-950 border-zinc-850 text-zinc-400"
-                      }`}>
-                        <tr>
-                          <th className="py-2.5 px-4">Categoria (N0)</th>
-                          <th className="py-2.5 px-3">Centro de Custo Target</th>
-                          <th className="py-2.5 px-3">Conta N6 (Razão)</th>
-                          <th className="py-2.5 px-3 text-right">Planejado YTD</th>
-                          <th className="py-2.5 px-3 text-right">Realizado Caixa</th>
-                          <th className="py-2.5 px-3 text-right">Variação (R$)</th>
-                          <th className="py-2.5 px-4 text-center">Farol Performance</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-300 dark:divide-zinc-800/40">
-                        {matrixTableData.map((row: any, index: number) => {
-                          const diff = row.realizado - row.planejado;
-                          const ratio = row.realizado / (row.planejado || 1);
-                          const percent = Math.round(ratio * 100);
-                          
-                          let statusLabel = "Excelente";
-                          let badgeClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-                          if (percent > 100) {
-                            statusLabel = "Estouro";
-                            badgeClass = "bg-red-500/10 text-red-400 border-red-500/20";
-                          } else if (percent > 85) {
-                            statusLabel = "Atenção";
-                            badgeClass = "bg-amber-500/10 text-amber-400 border-amber-500/20";
-                          } else if (percent > 40) {
-                            statusLabel = "Saudável";
-                            badgeClass = "bg-purple-500/10 text-purple-400 border-purple-500/20";
-                          }
+                {!isCrudMode ? (
+                  <>
+                    {/* Filtration bar inside drilling table */}
+                    <div className={`p-4 border rounded-xl flex flex-wrap items-center justify-between gap-4 ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
+                    }`}>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Instituição</label>
+                          <select
+                            value={dirFilterOrg}
+                            onChange={(e) => setDirFilterOrg(e.target.value)}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
+                              isL ? "bg-white text-slate-800" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          >
+                            <option value="TODAS">TODAS AS INSTITUIÇÕES</option>
+                            <option value="SESI">SESI</option>
+                            <option value="SENAI">SENAI</option>
+                            <option value="FIRJAN">FIRJAN / OUTROS</option>
+                          </select>
+                        </div>
 
-                          return (
-                            <tr key={index} className={`hover:bg-purple-500/[0.02] transition font-mono ${
-                              isL ? "text-slate-700" : "text-zinc-300"
-                            }`}>
-                              <td className="py-3 px-4 font-bold text-purple-650 dark:text-purple-400 truncate max-w-[130px] uppercase">{row.cat}</td>
-                              <td className="py-3 px-3 uppercase truncate max-w-[180px] font-bold">{row.cc}</td>
-                              <td className="py-3 px-3 truncate max-w-[160px]">{row.account6}</td>
-                              <td className="py-3 px-3 text-right text-slate-500">R$ {row.planejado.toLocaleString("pt-BR")}</td>
-                              <td className="py-3 px-3 text-right text-amber-600 dark:text-amber-500 font-extrabold">R$ {row.realizado.toLocaleString("pt-BR")}</td>
-                              <td className={`py-3 px-3 text-right font-black ${
-                                diff <= 0 ? "text-emerald-600 dark:text-[#00E676]" : "text-red-500"
-                              }`}>
-                                {diff <= 0 ? "-" : "+"}R$ {Math.abs(diff).toLocaleString("pt-BR")}
-                              </td>
-                              <td className="py-3 px-4 text-center">
-                                <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${badgeClass}`}>
-                                  {statusLabel} ({percent}%)
-                                </span>
-                              </td>
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Categoria N0</label>
+                          <select
+                            value={dirFilterConta}
+                            onChange={(e) => setDirFilterConta(e.target.value)}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
+                              isL ? "bg-white text-slate-800" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          >
+                            <option value="TODAS">TODAS AS CATEGORIAS</option>
+                            <option value="PESSOAL">PESSOAL</option>
+                            <option value="SERVIÇOS DE TERCEIROS">SERVIÇOS DE TERCEIROS</option>
+                            <option value="PRODUTOS & INSUMOS">PRODUTOS & INSUMOS</option>
+                            <option value="INVESTIMENTOS">INVESTIMENTOS</option>
+                            <option value="VIAGENS & LOGÍSTICA">VIAGENS & LOGÍSTICA</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <span className="text-[10px] font-mono text-zinc-500 uppercase">
+                        Exibindo <strong>{matrixTableData.length}</strong> conta(s) cruzada(s)
+                      </span>
+                    </div>
+
+                    {/* Grid Table */}
+                    <div className={`border rounded-xl overflow-hidden ${
+                      isC ? "border-[#FFFF00]" : "border-zinc-300 dark:border-zinc-800"
+                    }`}>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs font-sans">
+                          <thead className={`font-mono text-[10px] uppercase font-bold border-b ${
+                            isL ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-zinc-950 border-zinc-850 text-zinc-400"
+                          }`}>
+                            <tr>
+                              <th className="py-2.5 px-4">Categoria (N0)</th>
+                              <th className="py-2.5 px-3">Centro de Custo Target</th>
+                              <th className="py-2.5 px-3">Conta N6 (Razão)</th>
+                              <th className="py-2.5 px-3 text-right">Planejado YTD</th>
+                              <th className="py-2.5 px-3 text-right">Realizado Caixa</th>
+                              <th className="py-2.5 px-3 text-right">Variação (R$)</th>
+                              <th className="py-2.5 px-4 text-center">Farol Performance</th>
                             </tr>
-                          );
-                        })}
+                          </thead>
+                          <tbody className="divide-y divide-zinc-300 dark:divide-zinc-800/40">
+                            {matrixTableData.map((row: any, index: number) => {
+                              const diff = row.realizado - row.planejado;
+                              const ratio = row.realizado / (row.planejado || 1);
+                              const percent = Math.round(ratio * 100);
+                              
+                              let statusLabel = "Excelente";
+                              let badgeClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+                              if (percent > 100) {
+                                statusLabel = "Estouro";
+                                badgeClass = "bg-red-500/10 text-red-400 border-red-500/20";
+                              } else if (percent > 85) {
+                                statusLabel = "Atenção";
+                                badgeClass = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+                              } else if (percent > 40) {
+                                statusLabel = "Saudável";
+                                badgeClass = "bg-purple-500/10 text-purple-400 border-purple-500/20";
+                              }
 
-                        {matrixTableData.length === 0 && (
-                          <tr>
-                            <td colSpan={7} className="py-12 text-center text-zinc-500 italic font-mono">
-                              Nenhuma linha localizada para os critérios de pesquisa. Carregue demonstrações no Painel acima.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                              return (
+                                <tr key={index} className={`hover:bg-purple-500/[0.02] transition font-mono ${
+                                  isL ? "text-slate-700" : "text-zinc-300"
+                                }`}>
+                                  <td className="py-3 px-4 font-bold text-purple-650 dark:text-purple-400 truncate max-w-[130px] uppercase">{row.cat}</td>
+                                  <td className="py-3 px-3 uppercase truncate max-w-[180px] font-bold">{row.cc}</td>
+                                  <td className="py-3 px-3 truncate max-w-[160px]">{row.account6}</td>
+                                  <td className="py-3 px-3 text-right text-slate-500">R$ {row.planejado.toLocaleString("pt-BR")}</td>
+                                  <td className="py-3 px-3 text-right text-amber-600 dark:text-amber-500 font-extrabold">R$ {row.realizado.toLocaleString("pt-BR")}</td>
+                                  <td className={`py-3 px-3 text-right font-black ${
+                                    diff <= 0 ? "text-emerald-600 dark:text-[#00E676]" : "text-red-500"
+                                  }`}>
+                                    {diff <= 0 ? "-" : "+"}R$ {Math.abs(diff).toLocaleString("pt-BR")}
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${badgeClass}`}>
+                                      {statusLabel} ({percent}%)
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+
+                            {matrixTableData.length === 0 && (
+                              <tr>
+                                <td colSpan={7} className="py-12 text-center text-zinc-500 italic font-mono">
+                                  Nenhuma linha localizada para os critérios de pesquisa. Carregue demonstrações no Painel acima.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Filtration and Action Bar */}
+                    <div className={`p-4 border rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
+                    }`}>
+                      <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                        {/* Flow Select */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Fluxo Financeiro</label>
+                          <select
+                            value={crudFilterType}
+                            onChange={(e) => { setCrudFilterType(e.target.value as any); setCrudPage(1); }}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
+                              isL ? "bg-white text-slate-800 animate-none" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          >
+                            <option value="TODOS">TODOS OS LANÇAMENTOS</option>
+                            <option value="RECEITAS">RECEITAS (FATURAMENTO / ENTRADAS)</option>
+                            <option value="DESPESAS">DESPESAS (CUSTOS / OPERAÇÃO)</option>
+                            <option value="INVESTIMENTOS">INVESTIMENTOS (CAPEX)</option>
+                          </select>
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Filtro de Busca</label>
+                          <input
+                            type="text"
+                            placeholder="Buscar categoria, CC, conta, org..."
+                            value={crudSearch}
+                            onChange={(e) => { setCrudSearch(e.target.value); setCrudPage(1); }}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 w-60 ${
+                              isL ? "bg-white text-slate-800 border-slate-300" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Right-Side Add Button */}
+                      <button
+                        onClick={handleOpenCreateModal}
+                        className="w-full md:w-auto px-4 py-2 bg-purple-650 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer uppercase"
+                      >
+                        <Plus className="w-4 h-4" /> Novo Lançamento
+                      </button>
+                    </div>
+
+                    {/* CRUD Table */}
+                    <div className={`border rounded-xl overflow-hidden ${
+                      isC ? "border-[#FFFF00]" : "border-zinc-300 dark:border-zinc-800"
+                    }`}>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs font-sans">
+                          <thead className={`font-mono text-[10px] uppercase font-bold border-b ${
+                            isL ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-zinc-950 border-zinc-850 text-zinc-400"
+                          }`}>
+                            <tr>
+                              <th className="py-2.5 px-4">Org</th>
+                              <th className="py-2.5 px-3">Categoria (N0)</th>
+                              <th className="py-2.5 px-3">Grupo (N1)</th>
+                              <th className="py-2.5 px-3">Subgrupo (N2)</th>
+                              <th className="py-2.5 px-3">Centro de Custo</th>
+                              <th className="py-2.5 px-3">Conta N6 (Razão)</th>
+                              <th className="py-2.5 px-3 text-right">Total</th>
+                              <th className="py-2.5 px-3 text-center">Tipo</th>
+                              <th className="py-2.5 px-4 text-center">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-300 dark:divide-zinc-800/40">
+                            {filteredCrudRows.slice((crudPage - 1) * crudPageSize, crudPage * crudPageSize).map((row: any) => {
+                              // Blanks replacement formatting as requested by Marília
+                              const renderFuzzyCell = (val: string) => {
+                                if (!val || val.trim() === "" || val.toLowerCase().includes("sem informação") || val.toLowerCase().includes("em branco") || val.toLowerCase() === "null" || val.toLowerCase() === "undefined") {
+                                  return (
+                                    <span className="text-amber-600 dark:text-amber-500 font-extrabold italic text-[9.5px] bg-amber-500/10 dark:bg-amber-950/20 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                      [EM BRANCO - SEM INFORMAÇÃO]
+                                    </span>
+                                  );
+                                }
+                                return <span className="uppercase">{val}</span>;
+                              };
+
+                              return (
+                                <tr key={row.__originalIndex} className={`hover:bg-purple-500/[0.02] transition font-mono ${
+                                  isL ? "text-slate-700" : "text-zinc-300"
+                                }`}>
+                                  <td className="py-3 px-4 font-bold">{row.orgVal || "S/D"}</td>
+                                  <td className="py-3 px-3 font-semibold text-purple-600 dark:text-purple-400">{renderFuzzyCell(row.catVal)}</td>
+                                  <td className="py-3 px-3">{renderFuzzyCell(row.n1Val)}</td>
+                                  <td className="py-3 px-3">{renderFuzzyCell(row.n2Val)}</td>
+                                  <td className="py-3 px-3 truncate max-w-[150px]" title={row.ccVal}>{row.ccVal || "CENTRO GERAL"}</td>
+                                  <td className="py-3 px-3 truncate max-w-[150px]" title={row.n6Val}>{row.n6Val || "NÃO IDENTIFICADO"}</td>
+                                  <td className="py-3 px-3 text-right font-black text-amber-655 dark:text-amber-400">
+                                    R$ {row.totalVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                      row.origemVal === "PLANEJADO" 
+                                        ? "bg-blue-500/10 text-blue-400 border border-blue-500/20" 
+                                        : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                    }`}>
+                                      {row.origemVal}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    <div className="flex items-center justify-center gap-2">
+                                      <button
+                                        onClick={() => handleOpenEditModal(row)}
+                                        className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-350 hover:text-white border border-zinc-700 transition cursor-pointer"
+                                        title="Editar lançamento"
+                                      >
+                                        <Edit className="w-3.5 h-3.5 text-amber-500" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteCrud(row.__originalIndex)}
+                                        className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-350 hover:text-white border border-zinc-700 transition cursor-pointer"
+                                        title="Deletar lançamento"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+
+                            {filteredCrudRows.length === 0 && (
+                              <tr>
+                                <td colSpan={9} className="py-12 text-center text-zinc-500 italic font-mono">
+                                  Nenhum lançamento raw localizado para os critérios.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Pagination for CRUD */}
+                    {filteredCrudRows.length > crudPageSize && (
+                      <div className="flex items-center justify-between pt-2">
+                        <span className="text-[11px] font-mono text-zinc-400">
+                          Página <strong>{crudPage}</strong> de {Math.ceil(filteredCrudRows.length / crudPageSize)} ({filteredCrudRows.length} registros)
+                        </span>
+                        <div className="flex gap-1.5">
+                          <button
+                            disabled={crudPage === 1}
+                            onClick={() => setCrudPage(prev => Math.max(prev - 1, 1))}
+                            className="px-2.5 py-1 text-[10px] font-bold rounded bg-zinc-800 hover:bg-zinc-700 text-white disabled:opacity-40 transition cursor-pointer"
+                          >
+                            Anterior
+                          </button>
+                          <button
+                            disabled={crudPage >= Math.ceil(filteredCrudRows.length / crudPageSize)}
+                            onClick={() => setCrudPage(prev => prev + 1)}
+                            className="px-2.5 py-1 text-[10px] font-bold rounded bg-zinc-800 hover:bg-zinc-700 text-white disabled:opacity-40 transition cursor-pointer"
+                          >
+                            Próxima
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
+
+                {/* CRUD Modals for Create/Edit */}
+                {activeCrudModal && (
+                  <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className={`w-full max-w-lg rounded-2xl p-6 border shadow-2xl ${
+                        isL ? "bg-white border-slate-250 text-slate-805 shadow-2xl" : "bg-[#0c0a15] border-purple-500/20 text-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between pb-3 border-b border-zinc-500/15">
+                        <h4 className="font-display font-black text-sm uppercase text-purple-600 dark:text-purple-450 flex items-center gap-2">
+                          {activeCrudModal === "edit" ? "✏️ Editar Lançamento Síncrono" : "➕ Novo Lançamento Síncrono"}
+                        </h4>
+                        <button
+                          onClick={() => setActiveCrudModal(null)}
+                          className="text-zinc-450 hover:text-zinc-200 text-sm font-bold p-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="mt-4 space-y-3.5 text-xs">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-450 mb-1">Organização</label>
+                            <select
+                              value={formOrg}
+                              onChange={(e) => setFormOrg(e.target.value)}
+                              className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                isL ? "bg-slate-50 border-slate-300 text-slate-800" : "bg-black/40 border-zinc-800 text-white"
+                              }`}
+                            >
+                              <option value="SESI">SESI</option>
+                              <option value="SENAI">SENAI</option>
+                              <option value="FIRJAN">FIRJAN</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-450 mb-1">Tipo de Lançamento</label>
+                            <select
+                              value={formOrigem}
+                              onChange={(e) => setFormOrigem(e.target.value)}
+                              className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                isL ? "bg-slate-50 border-slate-300 text-slate-800" : "bg-black/40 border-zinc-800 text-white"
+                              }`}
+                            >
+                              <option value="PLANEJADO">PLANEJADO</option>
+                              <option value="REALIZADO">REALIZADO (CAIXA / AUDITORIA)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Categoria (Conta N0)</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: PESSOAL, SERVIÇOS DE TERCEIROS, INVESTIMENTOS, RECEITAS"
+                            value={formContaN0}
+                            onChange={(e) => setFormContaN0(e.target.value)}
+                            className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                              isL ? "bg-slate-50 border-slate-300 text-slate-800 font-medium" : "bg-black/40 border-zinc-800 text-white"
+                            }`}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Grupo (Conta N1)</label>
+                            <input
+                              type="text"
+                              placeholder="Opcional - Grupo"
+                              value={formContaN1}
+                              onChange={(e) => setFormContaN1(e.target.value)}
+                              className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                isL ? "bg-slate-50 border-slate-300 text-slate-800" : "bg-black/40 border-zinc-800 text-white"
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Subgrupo (Conta N2)</label>
+                            <input
+                              type="text"
+                              placeholder="Opcional - Subgrupo"
+                              value={formContaN2}
+                              onChange={(e) => setFormContaN2(e.target.value)}
+                              className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                isL ? "bg-slate-50 border-slate-300 text-slate-800" : "bg-black/40 border-zinc-800 text-white"
+                              }`}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Centro de Custo</label>
+                            <input
+                              type="text"
+                              placeholder="Ex: CENTRO DE CUSTO COORDENAÇÃO"
+                              value={formCC}
+                              onChange={(e) => setFormCC(e.target.value)}
+                              className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                isL ? "bg-slate-50 border-slate-300 text-slate-800" : "bg-black/40 border-zinc-800 text-white"
+                              }`}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Conta N6 (Razão)</label>
+                            <input
+                              type="text"
+                              placeholder="Ex: SERVIÇOS DE CONSULTORIA"
+                              value={formContaN6}
+                              onChange={(e) => setFormContaN6(e.target.value)}
+                              className={`w-full rounded border p-2 focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                isL ? "bg-slate-50 border-slate-300 text-slate-800" : "bg-black/40 border-zinc-800 text-white"
+                              }`}
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Valor Total (R$)</label>
+                          <input
+                            type="number"
+                            placeholder="0.00"
+                            value={formTotal}
+                            onChange={(e) => setFormTotal(parseFloat(e.target.value) || 0)}
+                            className={`w-full rounded border p-2 font-mono text-sm focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                              isL ? "bg-slate-50 border-slate-300 text-slate-850 font-black" : "bg-black/40 border-zinc-800 text-white"
+                            }`}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex justify-end gap-2 border-t border-zinc-500/15 pt-4">
+                        <button
+                          onClick={() => setActiveCrudModal(null)}
+                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          onClick={handleSaveCrud}
+                          className="px-4 py-2 bg-purple-650 hover:bg-purple-600 text-white rounded-lg text-xs font-bold transition cursor-pointer uppercase"
+                        >
+                          Salvar Lançamento
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
               </motion.div>
             )}
 
