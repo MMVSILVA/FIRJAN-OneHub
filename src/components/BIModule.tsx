@@ -81,7 +81,7 @@ export default function BIModule({
     } else if (selectedDataSet === "projects") {
       const data = getFilteredProjects();
       return data.map(p => ({
-        name: p.name.substring(0, 15) + "...",
+        name: (p.name || "").substring(0, 15) + "...",
         Previsto: p.budget,
         Realizado: p.spent
       }));

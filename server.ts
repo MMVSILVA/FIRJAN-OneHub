@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import * as XLSX from "xlsx";
 
 dotenv.config();
 
@@ -165,34 +166,129 @@ app.post("/api/ai/analyze-file", async (req, res) => {
       const sysInstruction = `Você é um Analista Executivo especialista em dados do Hub Firjan SENAI/SESI e IEL.
 Seu objetivo é analisar o arquivo de qualquer formato fornecido, extrair insights analíticos significativos, e propor soluções práticas voltadas para gestão, manutenção, orçamento ou faturamento de forma extremamente profissional.`;
 
-      const promptText = `Por favor, faça uma análise corporativa detalhada e profissional do arquivo "${fileName}" (Tamanho: ${fileSize}, Tipo: ${mimeType}).
+      // Supported native multimodal mime types in gemini-3.5-flash
+      const SUPPORTED_MULTIMODAL_MIMES = [
+        "image/png", "image/jpeg", "image/jpg", "image/webp", "image/heic", "image/heif", "image/gif",
+        "application/pdf",
+        "audio/mp3", "audio/mpeg", "audio/wav", "audio/aac", "audio/flac", "audio/ogg", "audio/m4a", "audio/webm",
+        "video/mp4", "video/mpeg", "video/quicktime", "video/mov", "video/avi", "video/flv", "video/webm", "video/wmv", "video/3gpp"
+      ];
+
+      // Parse spreadsheets/csv, plaintext files or fallback
+      let isSpreadsheet = false;
+      let textContent = "";
+
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      const isCsv = ext === "csv" || mimeType?.includes("csv");
+      const isExcel = ext === "xlsx" || ext === "xls" || mimeType?.includes("sheet") || mimeType?.includes("excel") || mimeType?.includes("vnd.ms-excel");
+
+      if (isCsv) {
+        isSpreadsheet = true;
+        try {
+          textContent = Buffer.from(fileData, "base64").toString("utf-8");
+        } catch (e: any) {
+          textContent = `Erro ao decodificar arquivo CSV: ${e.message}`;
+        }
+      } else if (isExcel) {
+        isSpreadsheet = true;
+        try {
+          const buffer = Buffer.from(fileData, "base64");
+          const workbook = XLSX.read(buffer, { type: "buffer" });
+          let sheetData = "";
+          workbook.SheetNames.forEach((sheetName) => {
+            const worksheet = workbook.Sheets[sheetName];
+            const csv = XLSX.utils.sheet_to_csv(worksheet);
+            if (csv && csv.trim()) {
+              sheetData += `### Aba/Planilha: ${sheetName}\n\n${csv}\n\n`;
+            }
+          });
+          textContent = sheetData || "Planilha com conteúdo vazio.";
+        } catch (e: any) {
+          console.error("Erro ao converter planilha Excel para texto:", e);
+          textContent = `Não foi possível extrair dados da planilha de formato Excel diretamente via parser. Detalhes: ${e.message}`;
+        }
+      }
+
+      const isPlaintext = ["txt", "json", "xml", "html", "cmd", "sh", "md", "css"].includes(ext || "") || mimeType?.startsWith("text/") || mimeType === "application/json";
+      const isTextBased = isSpreadsheet || isPlaintext;
+
+      if (isPlaintext && !isSpreadsheet) {
+        try {
+          textContent = Buffer.from(fileData, "base64").toString("utf-8");
+        } catch (e: any) {
+          textContent = `Erro ao decodificar arquivo de texto: ${e.message}`;
+        }
+      }
+
+      let response;
+      if (isTextBased) {
+        const promptText = `Por favor, faça uma análise corporativa detalhada e profissional da planilha/arquivo de dados "${fileName}" (Tamanho: ${fileSize}, Tipo: ${mimeType}).
+Instrução adicional de análise fornecida pelo usuário: "${userPrompt || "Análise executiva geral de riscos, finanças, dados ou relatórios técnicos"}".
+
+CONTEÚDO DO ARQUIVO DE PLANILHA/TEXTO EXTRAÍDO E PARSEADO:
+\`\`\`
+${textContent}
+\`\`\`
+
+Retorne uma resposta com formatação Markdown elegante contendo:
+1. Resumo Executivo Geral do Documento
+2. Estrutura dos Dados / Conteúdo Detectado
+3. Principais Insights Operacionais e Financeiros para o ecossistema Firjan Sesi/Senai
+4. Riscos/Pontos Críticos Identificados (se houver)
+5. Recomendações Estratégicas Claras com Próximos Passos recomendados para SESI ou SENAI.`;
+
+        response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: promptText,
+          config: {
+            systemInstruction: sysInstruction,
+          },
+        });
+      } else {
+        const isSupportedMime = SUPPORTED_MULTIMODAL_MIMES.includes(mimeType?.toLowerCase() || "");
+
+        if (isSupportedMime) {
+          const filePart = {
+            inlineData: {
+              mimeType: mimeType || "application/octet-stream",
+              data: fileData, // Base64 encoding string
+            }
+          };
+
+          const textPart = {
+            text: `Por favor, faça uma análise corporativa detalhada e profissional do arquivo de mídia/documento "${fileName}" (Tamanho: ${fileSize}, Tipo: ${mimeType}).
 Instrução adicional de análise fornecida pelo usuário: "${userPrompt || "Análise executiva geral de riscos, finanças, dados ou relatórios técnicos"}".
 Retorne uma resposta com formatação Markdown elegante contendo:
 1. Resumo Executivo Geral do Documento
 2. Estrutura dos Dados / Conteúdo Detectado
-3. Principais Insights Operacionais e Financeiros para o ecossistema Firjan
+3. Principais Insights Operacionais e Financeiros para o ecossistema Firjan Sesi/Senai
 4. Riscos/Pontos Críticos Identificados (se houver)
-5. Recomendações Estratégicas Claras com Próximos Passos recomendados para SESI ou SENAI.`;
+5. Recomendações Estratégicas Claras com Próximos Passos recomendados para SESI ou SENAI.`,
+          };
 
-      // Mount image/file part for multimodal model
-      const filePart = {
-        inlineData: {
-          mimeType: mimeType || "application/octet-stream",
-          data: fileData, // Base64 encoding string
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: { parts: [filePart, textPart] },
+            config: {
+              systemInstruction: sysInstruction,
+            },
+          });
+        } else {
+          // If unsupported binary format (rare fallback)
+          const fallbackPrompt = `Por favor, faça uma análise corporativa e estratégica do arquivo "${fileName}" (Tamanho: ${fileSize}, Tipo: ${mimeType}).
+O formato deste arquivo é do tipo binário específico e não pôde ser convertido diretamente para texto estruturado no servidor, nem é suportado diretamente por multimodal nativo.
+Instrução adicional de análise fornecida pelo usuário: "${userPrompt || "Análise executiva geral de riscos, finanças, dados ou relatórios técnicos"}".
+Por favor, forneça uma análise conceitual estruturada baseada nesses metadados, recomendando melhores práticas de segurança e gestão destas informações na PMO do ecossistema Firjan SESI/SENAI.`;
+
+          response = await ai.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: fallbackPrompt,
+            config: {
+              systemInstruction: sysInstruction,
+            },
+          });
         }
-      };
-
-      const textPart = {
-        text: promptText,
-      };
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: { parts: [filePart, textPart] },
-        config: {
-          systemInstruction: sysInstruction,
-        },
-      });
+      }
 
       const responseText = response.text || "Análise concluída com sucesso, mas nenhum texto pôde ser extraído da resposta do modelo.";
       return res.json({ text: responseText, source: "gemini" });

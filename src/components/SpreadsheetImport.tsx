@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { Upload, FileText, CheckCircle2, AlertCircle, RefreshCw, Layers } from "lucide-react";
+import { Upload, FileText, CheckCircle2, AlertCircle, RefreshCw, Layers, FileSpreadsheet } from "lucide-react";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 
@@ -18,6 +18,74 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
   const [resultsSummary, setResultsSummary] = useState<{ rows: number; cols: number; inconsistencies: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleDownloadTemplate = () => {
+    try {
+      const wb = XLSX.utils.book_new();
+
+      // 1. Financeiro Tab
+      const financeData = [
+        { "Valor": 15420.50, "Tipo": "Receita", "Categoria": "Faturamento Contratual", "Data": "2026-06-15", "Unidade": "SENAI", "Descrição": "Serviço de treinamento customizado para indústria metalmecânica" },
+        { "Valor": 4800.00, "Tipo": "Despesa", "Categoria": "Manutenção Industrial", "Data": "2026-06-18", "Unidade": "SESI", "Descrição": "Conserto da Ponte Rolante de Carga 15 Ton" },
+        { "Valor": 50000.00, "Tipo": "Despesa", "Categoria": "Infraestrutura", "Data": "2026-06-20", "Unidade": "SENAI", "Descrição": "Repasse emergencial de verba de custeio" }
+      ];
+      const wsFinance = XLSX.utils.json_to_sheet(financeData);
+      wsFinance["!cols"] = [
+        { wch: 15 }, // Valor
+        { wch: 12 }, // Tipo
+        { wch: 25 }, // Categoria
+        { wch: 12 }, // Data
+        { wch: 12 }, // Unidade
+        { wch: 50 }  // Descrição
+      ];
+      XLSX.utils.book_append_sheet(wb, wsFinance, "Financeiro");
+
+      // 2. Projetos Tab
+      const projectsData = [
+        { "Nome": "Modernização Laboratório Automação", "Objetivo": "Implantação de novas bancadas robóticas e sistemas integrados PLC", "Responsavel": "Thais Nicolau", "Area": "Tecnologia", "Unidade": "SENAI", "Inicio": "2026-01-10", "Prazo": "2026-11-30", "Orcamento": 180000 },
+        { "Nome": "Programa Qualidade de Vida Sesi", "Objetivo": "Acompanhamento ergonômico preventivo para operários industriais", "Responsavel": "Marília Moreira", "Area": "Saúde", "Unidade": "SESI", "Inicio": "2026-03-01", "Prazo": "2026-09-30", "Orcamento": 75000 }
+      ];
+      const wsProjects = XLSX.utils.json_to_sheet(projectsData);
+      wsProjects["!cols"] = [
+        { wch: 35 }, // Nome
+        { wch: 50 }, // Objetivo
+        { wch: 20 }, // Responsavel
+        { wch: 15 }, // Area
+        { wch: 12 }, // Unidade
+        { wch: 12 }, // Inicio
+        { wch: 12 }, // Prazo
+        { wch: 15 }  // Orcamento
+      ];
+      XLSX.utils.book_append_sheet(wb, wsProjects, "Projetos");
+
+      // 3. RH Tab
+      const rhData = [
+        { "Nome": "Carlos Alberto Silva", "Cargo": "Instrutor de Mecatrônica", "Departamento": "Educação Profissional", "Unidade": "SENAI", "Admissao": "2021-04-12", "Banco": 12.5, "Treinamentos": 4 },
+        { "Nome": "Juliana Rodrigues Costa", "Cargo": "Analista de Ergonomia", "Departamento": "Saúde Ocupacional", "Unidade": "SESI", "Admissao": "2023-08-19", "Banco": -4.0, "Treinamentos": 2 }
+      ];
+      const wsRH = XLSX.utils.json_to_sheet(rhData);
+      wsRH["!cols"] = [
+        { wch: 25 }, // Nome
+        { wch: 25 }, // Cargo
+        { wch: 25 }, // Departamento
+        { wch: 12 }, // Unidade
+        { wch: 12 }, // Admissao
+        { wch: 10 }, // Banco
+        { wch: 15 }  // Treinamentos
+      ];
+      XLSX.utils.book_append_sheet(wb, wsRH, "RH");
+
+      // Write workbook
+      XLSX.writeFile(wb, "FIRJAN_OneHub_Modelos_Template.xlsx");
+      onAddAuditLog(
+        "Download de Template Excel",
+        "BUSINESS_INTELLIGENCE",
+        "Download realizado do arquivo de templates Excel formatado com modelos dos 3 pilares."
+      );
+    } catch (err: any) {
+      console.error("Falha ao gerar template Excel:", err);
+    }
+  };
+
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -29,12 +97,14 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
   };
 
   const validateAndProcessData = (parsedRows: any[]) => {
-    if (parsedRows.length === 0) {
-      throw new Error("A planilha importada está vazia.");
+    // Filter out invalid, null, undefined or empty rows
+    const cleanRows = (parsedRows || []).filter((r: any) => r !== null && typeof r === 'object' && Object.keys(r).length > 0);
+    if (cleanRows.length === 0) {
+      throw new Error("A planilha importada está vazia ou não contém dados válidos.");
     }
 
     const inconsistencies: string[] = [];
-    const headers = Object.keys(parsedRows[0]);
+    const headers = Object.keys(cleanRows[0]);
     const processedRows: any[] = [];
 
     // Basic heuristic validation based on selected data target mapping
@@ -46,7 +116,7 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
         inconsistencies.push(`Colunas recomendadas ausentes: ${missing.join(", ")}. Tentando mapear dados aproximados.`);
       }
 
-      parsedRows.forEach((row, i) => {
+      cleanRows.forEach((row, i) => {
         let amount = 0;
         let pAmount = row.valor || row.Amount || row.Val || row.amount || row.Valor;
         if (pAmount !== undefined) {
@@ -81,7 +151,7 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
       });
 
     } else if (selectedType === "Projetos") {
-      parsedRows.forEach((row, i) => {
+      cleanRows.forEach((row, i) => {
         const name = row.nome || row.Nome || row.Project || row.project || row.titulo;
         if (!name) {
           inconsistencies.push(`Linha ${i + 2}: Nome do projeto ausente. Nome fictício gerado.`);
@@ -115,7 +185,7 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
       });
     } else {
       // RH
-      parsedRows.forEach((row, i) => {
+      cleanRows.forEach((row, i) => {
         const name = row.nome || row.Nome || row.Name || row.name;
         if (!name) {
           inconsistencies.push(`Linha ${i + 2}: Nome do colaborador obrigatório está ausente. Ignorado.`);
@@ -246,7 +316,7 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
         </div>
 
         {/* Target Mapping Selection */}
-        <div className="flex gap-2 shrink-0">
+        <div className="flex flex-wrap gap-2 shrink-0 items-center">
           {(["Financeiro", "Projetos", "RH"] as const).map((type) => (
             <button
               key={type}
@@ -262,6 +332,16 @@ export default function SpreadsheetImport({ onImport, onAddAuditLog, theme }: Sp
               Mapear para {type}
             </button>
           ))}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDownloadTemplate();
+            }}
+            className="text-[10px] px-2.5 py-1 rounded-md border border-emerald-500/30 bg-emerald-950/20 hover:bg-emerald-900/30 text-emerald-400 font-mono transition flex items-center gap-1 cursor-pointer"
+            title="Download de Modelo de Excel Formatado (.xlsx)"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500" /> Template Excel (.xlsx)
+          </button>
         </div>
       </div>
 
