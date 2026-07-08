@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import * as XLSX from "xlsx";
+import Papa from "papaparse";
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
   Tooltip, Legend, PieChart, Pie, Cell 
@@ -7,9 +9,10 @@ import {
   Landmark, FileSpreadsheet, Sliders, Play, CheckCircle, Flame, CheckCircle2, 
   Search, Filter, Plus, ArrowRight, Trash2, ArrowUpDown, TrendingUp, TrendingDown, 
   DollarSign, Calendar, UploadCloud, Sparkles, Presentation, FileText, AlertTriangle, ChevronRight, Layers, LayoutGrid,
-  Edit
+  Edit, Eye, Check
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { exportCustomBudgetReportToPDF } from "../utils/pdfGenerator";
 
 interface BudgetDashboardProps {
   theme: "light" | "dark" | "contrast";
@@ -98,7 +101,217 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
   handleApproveBudgetRequest
 }) => {
   const [orcamentoSubView, setOrcamentoSubView] = useState<"governance" | "director-panel">("director-panel");
-  const [activeDiretoriaTab, setActiveDiretoriaTab] = useState<"diretoria" | "visao" | "detalhamento" | "razao" | "suplementacoes" | "simulador">("diretoria");
+  const [activeDiretoriaTab, setActiveDiretoriaTab] = useState<"diretoria" | "visualizacao" | "analise" | "dados" | "razao" | "suplementacoes" | "simulador">("diretoria");
+  
+  // Local states for file analysis/comparison
+  const [compareFileAId, setCompareFileAId] = useState<string>("");
+  const [compareFileBId, setCompareFileBId] = useState<string>("");
+
+  // Real-time analysis logs for user feedback
+  const [analysisLogs, setAnalysisLogs] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "warn" }>>([
+    { time: new Date().toLocaleTimeString(), msg: "Plataforma iniciada. Aguardando novos repasses para análise.", type: "info" }
+  ]);
+
+  // Customized Report Generator modal & options
+  const [showExportModal, setShowExportModal] = useState<boolean>(false);
+  const [reportIncludeKPIs, setReportIncludeKPIs] = useState<boolean>(true);
+  const [reportIncludeUnits, setReportIncludeUnits] = useState<boolean>(true);
+  const [reportIncludeTopCC, setReportIncludeTopCC] = useState<boolean>(true);
+  const [reportIncludeFileList, setReportIncludeFileList] = useState<boolean>(true);
+  const [reportIncludeRecentRows, setReportIncludeRecentRows] = useState<boolean>(true);
+  const [reportTitle, setReportTitle] = useState<string>("RELATÓRIO FINANCEIRO GERENCIAL CONSOLIDADO");
+  const [reportSubtitle, setReportSubtitle] = useState<string>("Análise YTD das Contas Orçamentárias");
+
+  // Selection states for files comparison (multi-file mode)
+  const [selectedCompareIds, setSelectedCompareIds] = useState<string[]>([]);
+  const [compareMode, setCompareMode] = useState<"side" | "multi">("side");
+
+  const getFileStats = (file: any) => {
+    if (!file || !file.content) return { type: "Desconhecido", records: 0, planejado: 0, realizado: 0, executionRate: 0, isDetalhes: false, isRazao: false, rows: [] };
+    try {
+      let cleanBase64 = file.content;
+      if (cleanBase64.includes(",")) {
+        cleanBase64 = cleanBase64.split(",")[1];
+      }
+      cleanBase64 = cleanBase64.replace(/\s/g, "");
+      const binaryString = window.atob(cleanBase64);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      let rows: any[] = [];
+      if (ext === "csv") {
+        const csvText = new TextDecoder("utf-8").decode(bytes);
+        const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+        rows = parsed.data || [];
+      } else if (ext === "xlsx" || ext === "xls") {
+        const workbook = XLSX.read(bytes, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        rows = XLSX.utils.sheet_to_json(worksheet) || [];
+      }
+      
+      rows = rows.filter((r: any) => r && typeof r === 'object');
+      if (rows.length === 0) return { type: "Vazia/Inválida", records: 0, planejado: 0, realizado: 0, executionRate: 0, isDetalhes: false, isRazao: false, rows: [] };
+      
+      const sampleRow = rows[0];
+      const keys = Object.keys(sampleRow).map(k => k.toLowerCase().trim());
+      
+      const hasOrigem = keys.some(k => ["origem", "tipo", "origem_"].includes(k.replace(/_/g, " ").trim()));
+      const hasTotal = keys.some(k => ["total", "valor", "soma", "total_"].includes(k.replace(/_/g, " ").trim()));
+      const hasCC = keys.some(k => ["descricao centro de custo", "centro de custo", "cc"].includes(k.replace(/_/g, " ").trim()));
+      
+      const isDetalhes = hasOrigem && hasCC;
+      const isRazao = !hasOrigem && keys.some(k => ["historico", "historico_lancamento", "histórico lançamento", "historico lancamento", "historico do extrato / nota", "realizado"].includes(k.replace(/_/g, " ").trim()) || k.includes("lançamento") || k.includes("lancamento") || k.includes("histórico"));
+      
+      let typeStr = "Planilha de Dados";
+      if (isDetalhes) typeStr = "Detalhes Orçamentários YTD";
+      else if (isRazao) typeStr = "Extrato Lançamentos Razão";
+      
+      let planejado = 0;
+      let realizado = 0;
+      
+      rows.forEach(row => {
+        const orig = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+        const valVal = findFuzzyValue(row, ["Total", "valor"]);
+        const val = Number(String(valVal || "0").replace(/[^\d.-]/g, "")) || 0;
+        if (orig === "PLANEJADO") planejado += val;
+        else if (orig === "REALIZADO") realizado += val;
+        else {
+          if (isRazao) {
+            const rVal = findFuzzyValue(row, ["Realizado", "Valor", "total"]);
+            realizado += Number(String(rVal || "0").replace(/[^\d.-]/g, "")) || 0;
+          } else {
+            realizado += val;
+          }
+        }
+      });
+      
+      const executionRate = planejado > 0 ? (realizado / planejado) * 100 : 0;
+      
+      return {
+        type: typeStr,
+        records: rows.length,
+        planejado,
+        realizado,
+        executionRate,
+        isDetalhes,
+        isRazao,
+        rows
+      };
+    } catch (err) {
+      console.error(err);
+      return { type: "Erro de Leitura", records: 0, planejado: 0, realizado: 0, executionRate: 0, isDetalhes: false, isRazao: false, rows: [] };
+    }
+  };
+
+  const activateFile = (file: any) => {
+    const stats = getFileStats(file);
+    if (stats.records === 0) {
+      addToast("Erro de Sincronização", "O arquivo selecionado está vazio ou não pôde ser interpretado.", "error");
+      return;
+    }
+
+    if (stats.isDetalhes) {
+      setRawDetalhes(stats.rows);
+      localStorage.setItem("onehub_rawDetalhes", JSON.stringify(stats.rows));
+      
+      // Also compile Cost Centers
+      const ccMap = new Map();
+      stats.rows.forEach((row: any, index: number) => {
+        const ccName = String(findFuzzyValue(row, ["Descricao Centro de Custo", "Centro de Custo", "cc"]) || "Centro Geral");
+        const dTotalVal = findFuzzyValue(row, ["Total", "valor", "soma", "total_"]);
+        const dTotal = Number(String(dTotalVal || "0").replace(/[^\d.-]/g, '')) || 0;
+        const dOrigem = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+        const orgVal = String(findFuzzyValue(row, ["Organização", "organizacao", "empresa", "unidade"]) || "").toUpperCase();
+        const unit = orgVal.includes("SENAI") ? "SENAI" : orgVal.includes("SESI") ? "SESI" : "FIRJAN";
+        const n0Category = String(findFuzzyValue(row, ["Conta N0", "categoria", "categoria n0"]) || "Outros");
+
+        if (!ccMap.has(ccName)) {
+          ccMap.set(ccName, {
+            id: `CC-${100 + index}`,
+            name: ccName,
+            owner: "Marília Moreira de Melo Brito",
+            budgetLimit: 0,
+            allocated: 0,
+            spent: 0,
+            status: "Excelente",
+            unit: unit,
+            product: n0Category
+          });
+        }
+        const item = ccMap.get(ccName);
+        if (dOrigem === "PLANEJADO") {
+          item.allocated += dTotal;
+          item.budgetLimit += dTotal * 1.1;
+        } else if (dOrigem === "REALIZADO") {
+          item.spent += dTotal;
+        }
+      });
+
+      const parsedCCs = Array.from(ccMap.values()).map(item => {
+        const ratio = item.spent / (item.allocated || 1);
+        let currentStatus: any = "Excelente";
+        if (ratio >= 0.95) currentStatus = "Crítico";
+        else if (ratio >= 0.75) currentStatus = "Atenção";
+        else if (ratio >= 0.40) currentStatus = "Saudável";
+        return { ...item, status: currentStatus };
+      });
+
+      if (parsedCCs.length > 0) {
+        setCostCenters(parsedCCs);
+      }
+      
+      setAnalysisLogs(prev => [
+        {
+          time: new Date().toLocaleTimeString(),
+          msg: `Ativado Dataset Orçamentário: "${file.name}"`,
+          type: "success"
+        },
+        ...prev
+      ]);
+
+      addToast("Dataset Ativado", `O arquivo de orçamento "${file.name}" foi definido como fonte ativa dos painéis!`, "success");
+    } else if (stats.isRazao) {
+      setRawRazao(stats.rows);
+      localStorage.setItem("onehub_rawRazao", JSON.stringify(stats.rows));
+
+      setAnalysisLogs(prev => [
+        {
+          time: new Date().toLocaleTimeString(),
+          msg: `Ativado Dataset de Extrato Razão: "${file.name}"`,
+          type: "success"
+        },
+        ...prev
+      ]);
+
+      addToast("Extrato Ativado", `O arquivo de extrato razão "${file.name}" foi definido como fonte ativa para auditoria do ledger!`, "success");
+    } else {
+      setRawDetalhes(stats.rows);
+      localStorage.setItem("onehub_rawDetalhes", JSON.stringify(stats.rows));
+      addToast("Planilha Ativada", `O arquivo "${file.name}" foi carregado no sistema.`, "info");
+    }
+  };
+
+  const removeFile = (fileId: string) => {
+    const fileToRemove = uploadedFiles.find(f => f.id === fileId);
+    if (!fileToRemove) return;
+    setUploadedFiles(prev => prev.filter(f => f.id !== fileId));
+    setAnalysisLogs(prev => [
+      {
+        time: new Date().toLocaleTimeString(),
+        msg: `Removido arquivo do repositório: "${fileToRemove.name}"`,
+        type: "warn"
+      },
+      ...prev
+    ]);
+    addToast("Arquivo Removido", `O arquivo "${fileToRemove.name}" foi removido do repositório de documentos local.`, "warning");
+  };
+  
+  // Local state for viewing row details
+  const [viewingRow, setViewingRow] = useState<any | null>(null);
   
   // What-If Simulator private states
   const [simSourceCCId, setSimSourceCCId] = useState<string>("");
@@ -630,6 +843,29 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                                 content: resBase64,
                                 service: "orcamento"
                               }]);
+
+                              // Real-time analysis status logging
+                              const sizeStr = file.size > 1024 * 1024 ? (file.size / (1024 * 1024)).toFixed(2) + " MB" : (file.size / 1024).toFixed(0) + " KB";
+                              const tempStats = getFileStats({ name: file.name, content: resBase64 });
+                              setAnalysisLogs(prev => [
+                                {
+                                  time: new Date().toLocaleTimeString(),
+                                  msg: `Recebido: "${file.name}" (${sizeStr}). Processando metadados...`,
+                                  type: "info"
+                                },
+                                {
+                                  time: new Date().toLocaleTimeString(),
+                                  msg: `Identificado: Estrutura mapeada como "${tempStats.type}".`,
+                                  type: "success"
+                                },
+                                {
+                                  time: new Date().toLocaleTimeString(),
+                                  msg: `Atualizado: ${tempStats.records} registros integrados ao painel ativo em tempo real!`,
+                                  type: "success"
+                                },
+                                ...prev
+                              ]);
+
                               parsedCount++;
                               resolveBlob();
                             };
@@ -646,7 +882,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                     <button 
                       type="button"
                       onClick={() => document.getElementById("multi-doc-dropzone-embed")?.click()}
-                      className="text-xs uppercase font-mono font-black tracking-widest text-purple-650 dark:text-purple-455 hover:underline cursor-pointer bg-transparent border-none outline-none"
+                      className="text-xs uppercase font-mono font-black tracking-widest text-purple-600 dark:text-purple-400 hover:underline cursor-pointer bg-transparent border-none outline-none"
                     >
                       Arraste ou Clique para Upload de Várias Planilhas
                     </button>
@@ -679,7 +915,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                 <div className="flex gap-2">
                   <button
                     onClick={loadExecutiveSampleData}
-                    className="flex-1 py-2 px-3 bg-purple-650 hover:bg-purple-700 text-white font-mono text-[10px] font-bold uppercase rounded-lg cursor-pointer transition flex items-center justify-center gap-1 border border-purple-600/40"
+                    className="flex-1 py-2 px-3 bg-purple-600 hover:bg-purple-700 text-white font-mono text-[10px] font-bold uppercase rounded-lg cursor-pointer transition flex items-center justify-center gap-1 border border-purple-600/40"
                   >
                     <Sparkles className="w-3.5 h-3.5" /> Amostra Demo
                   </button>
@@ -695,12 +931,144 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
             </div>
           </div>
 
+          {/* Section: Uploaded Files Repository & Real-Time Terminal Log */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
+            
+            {/* Left: Files Repository */}
+            <div className={`lg:col-span-7 p-5 rounded-2xl border ${
+              isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+            }`}>
+              <div className="flex justify-between items-center mb-4 pb-2 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-purple-500 animate-pulse" />
+                  <div>
+                    <h3 className="text-sm font-black font-sans uppercase text-slate-800 dark:text-zinc-200">Repositório de Arquivos Adicionados</h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">Gerencie e sincronize as planilhas carregadas</p>
+                  </div>
+                </div>
+                <div className="text-[10px] uppercase font-mono font-bold bg-purple-500/10 text-purple-400 px-2.5 py-1 rounded-md border border-purple-500/15">
+                  {uploadedFiles.length} {uploadedFiles.length === 1 ? "arquivo" : "arquivos"}
+                </div>
+              </div>
+
+              {uploadedFiles.length === 0 ? (
+                <div className="py-12 text-center text-zinc-500 italic text-xs font-mono">
+                  <UploadCloud className="w-8 h-8 mx-auto mb-2 opacity-30 text-purple-500" />
+                  Nenhum arquivo adicionado ao repositório local.<br />
+                  Utilize a área de upload acima ou clique em "Amostra Demo".
+                </div>
+              ) : (
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1.5 scrollbar-thin">
+                  {uploadedFiles.map((file) => {
+                    const stats = getFileStats(file);
+                    const isDet = stats.isDetalhes;
+                    const isRaz = stats.isRazao;
+                    return (
+                      <div 
+                        key={file.id} 
+                        className={`p-3 rounded-xl border flex items-center justify-between gap-3 transition-all duration-150 ${
+                          isL ? "bg-slate-50 border-slate-200 hover:bg-slate-100" : "bg-zinc-950/40 border-zinc-900 hover:bg-zinc-900/40"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className={`p-2 rounded-lg ${
+                            isDet ? "bg-purple-500/10 text-purple-500" : isRaz ? "bg-emerald-500/10 text-emerald-500" : "bg-blue-500/10 text-blue-500"
+                          }`}>
+                            <FileSpreadsheet className="w-4 h-4" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate" title={file.name}>
+                              {file.name}
+                            </h4>
+                            <div className="flex flex-wrap items-center gap-x-2 mt-1 text-[9px] font-mono text-zinc-500">
+                              <span>Tamanho: {file.size}</span>
+                              <span>•</span>
+                              <span>Registros: {stats.records}</span>
+                              <span>•</span>
+                              <span className={`px-1 rounded uppercase font-extrabold text-[8px] ${
+                                isDet ? "bg-purple-500/10 text-purple-400" : isRaz ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400"
+                              }`}>
+                                {stats.type}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => activateFile(file)}
+                            className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white font-mono text-[9px] uppercase font-bold rounded-md transition flex items-center gap-1 cursor-pointer border-none"
+                            title="Ativar e sincronizar como fonte ativa de dados do painel"
+                          >
+                            <Play className="w-2.5 h-2.5" /> Ativar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(file.id)}
+                            className="p-1 text-red-400 hover:bg-red-500/10 hover:text-red-500 rounded transition cursor-pointer border-none bg-transparent"
+                            title="Remover arquivo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Right: Real-time logs and statistics */}
+            <div className={`lg:col-span-5 p-5 rounded-2xl border ${
+              isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+            }`}>
+              <div className="flex justify-between items-center mb-4 pb-2 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                  <div>
+                    <h3 className="text-sm font-black font-sans uppercase text-slate-800 dark:text-zinc-200">Auditor em Tempo Real</h3>
+                    <p className="text-[10px] text-zinc-500 font-mono">Status da identificação estrutural de dados</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setAnalysisLogs([
+                    { time: new Date().toLocaleTimeString(), msg: "Logs reiniciados pelo operador.", type: "info" }
+                  ])}
+                  className="text-[9px] font-mono hover:underline text-purple-400 uppercase bg-transparent border-none outline-none cursor-pointer"
+                >
+                  Limpar Logs
+                </button>
+              </div>
+
+              {/* Scrolling Log Monitor */}
+              <div className="bg-black/95 border border-zinc-900 rounded-xl p-4 h-56 md:h-64 overflow-y-auto font-mono text-[9.5px] leading-relaxed text-zinc-300 space-y-2.5 scrollbar-thin">
+                {analysisLogs.map((log, idx) => {
+                  const isSuccess = log.type === "success";
+                  const isWarn = log.type === "warn";
+                  const prefix = isSuccess ? "✔" : isWarn ? "⚠" : "ℹ";
+                  const colorClass = isSuccess ? "text-emerald-400" : isWarn ? "text-amber-500" : "text-blue-400";
+                  return (
+                    <div key={idx} className="flex gap-2 items-start border-b border-zinc-900 pb-1.5 last:border-0 last:pb-0">
+                      <span className="text-zinc-600 flex-shrink-0">[{log.time}]</span>
+                      <span className={`${colorClass} font-bold flex-shrink-0`}>{prefix}</span>
+                      <span className="break-all">{log.msg}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+
           {/* Sub Tab selection bar for Directory views */}
           <div className="flex border-b border-zinc-300 dark:border-zinc-800 pb-px gap-2 overflow-x-auto scrollbar-none">
             {[
               { id: "diretoria", label: "📊 Relatório Executivo YTD" },
-              { id: "visao", label: "🏢 Desdobramento Macro" },
-              { id: "detalhamento", label: "📋 Matriz de Detalhamento" },
+              { id: "visualizacao", label: "👁️ Visualização" },
+              { id: "analise", label: "📊 Análise Comparativa" },
+              { id: "dados", label: "📋 Dados" },
               { id: "razao", label: "🔍 Lupa no Razão (Ledger)" },
               { id: "suplementacoes", label: "📈 Suplementações" },
               { id: "simulador", label: "⚙️ Simulador What-If" }
@@ -710,7 +1078,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                 onClick={() => setActiveDiretoriaTab(tab.id)}
                 className={`py-2 px-4 text-xs font-bold transition rounded-t-lg border-b-2 cursor-pointer font-sans uppercase tracking-wider ${
                   activeDiretoriaTab === tab.id
-                    ? "border-purple-650 text-purple-600 dark:text-purple-400 bg-purple-500/5"
+                    ? "border-purple-600 text-purple-600 dark:text-purple-400 bg-purple-500/5"
                     : "border-transparent text-slate-500 dark:text-zinc-500 hover:text-slate-800 dark:hover:text-slate-200"
                 }`}
               >
@@ -1006,47 +1374,1210 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
               </motion.div>
             )}
 
-            {activeDiretoriaTab === "visao" && (
+            {activeDiretoriaTab === "visualizacao" && (
               <motion.div 
-                key="tab-visao"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
+                key="tab-visualizacao"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className={`p-5 rounded-2xl border ${
-                  isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
-                }`}
+                className="space-y-6"
               >
-                <div>
-                  <h3 className="text-xs uppercase font-mono tracking-widest font-black text-purple-600 dark:text-purple-400 mb-0.5">Módulos Estruturais SESI x SENAI</h3>
-                  <h2 className="text-lg font-black font-sans uppercase mb-2">Desdobramento Macro Comparativo</h2>
-                  <p className="text-xs text-zinc-500 mb-5 max-w-2xl leading-relaxed">
-                    Visualização institucional das despesas efetuadas face ao montante original reservado para cada órgão filiado da Firjan.
+                {/* Visualizer header */}
+                <div className={`p-5 rounded-2xl border ${
+                  isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-250 shadow-sm" : "bg-zinc-950 border-zinc-900"
+                }`}>
+                  <h3 className="text-xs uppercase font-mono tracking-widest font-black text-purple-600 dark:text-purple-400 mb-0.5">👁️ Hub de Inteligência Visual</h3>
+                  <h2 className="text-lg font-black font-sans uppercase mb-1">Visualização Analítica de Indicadores</h2>
+                  <p className="text-xs text-zinc-500 max-w-3xl leading-relaxed">
+                    Explore gráficos de execução consolidada, distribuição por categorias de auditoria e centros de custo gargalos em tempo de execução.
                   </p>
                 </div>
 
-                {orgReportData.length === 0 ? (
-                  <div className="py-20 text-center italic text-zinc-500 font-mono font-bold text-xs">
-                    Nenhum dado consolidado disponível. Importe uma planilha para carregar os relatórios geográficos.
+                {rawDetalhes.length === 0 ? (
+                  <div className={`p-16 text-center rounded-2xl border ${
+                    isL ? "bg-slate-50 border-slate-200" : "bg-black/25 border-zinc-900"
+                  }`}>
+                    <LayoutGrid className="w-12 h-12 text-purple-400/50 mx-auto mb-3" />
+                    <h3 className="text-sm font-bold font-sans uppercase tracking-wider">Aguardando Importação de Arquivo</h3>
+                    <p className="text-xs text-zinc-500 max-w-sm mx-auto mt-1 leading-relaxed">
+                      Nenhum dado orçamentário disponível para gerar gráficos. Importe planilhas na barra de uploader ou clique no botão de Amostra Demo!
+                    </p>
                   </div>
                 ) : (
-                  <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={orgReportData}>
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                        <XAxis dataKey="name" fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
-                        <YAxis fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
-                        <Tooltip formatter={(value: any) => `R$ ${value.toLocaleString("pt-BR")}`} />
-                        <Legend style={{ fontSize: "11px" }} />
-                        <Bar dataKey="Planejado" name="Cota Planejada YTD" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="Realizado" name="Lançamento Auditoria" fill="#ec4899" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Graph 1: Desdobramento Macro (Org Comparativo) */}
+                    <div className={`p-5 rounded-2xl border ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                    }`}>
+                      <h4 className="text-xs font-bold uppercase font-mono text-purple-500 tracking-wider mb-1">Cota por Órgão</h4>
+                      <h3 className="text-sm font-black font-sans uppercase mb-4">Desdobramento Macro Comparativo</h3>
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={orgReportData}>
+                            <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                            <XAxis dataKey="name" fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                            <YAxis fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                            <Tooltip formatter={(value: any) => `R$ ${value.toLocaleString("pt-BR")}`} />
+                            <Legend style={{ fontSize: "11px" }} />
+                            <Bar dataKey="Planejado" name="Cota Planejada YTD" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="Realizado" name="Lançamento Auditoria" fill="#ec4899" radius={[4, 4, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Graph 2: Categoria N0 (Pie Chart) */}
+                    <div className={`p-5 rounded-2xl border ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                    }`}>
+                      <h4 className="text-xs font-bold uppercase font-mono text-purple-500 tracking-wider mb-1">Análise de Gastos</h4>
+                      <h3 className="text-sm font-black font-sans uppercase mb-4">Distribuição por Categoria (N0)</h3>
+                      <div className="h-64 flex flex-col justify-between">
+                        {(() => {
+                          const categoryGroupMap = new Map();
+                          rawDetalhes.forEach(row => {
+                            const orig = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+                            if (orig === "REALIZADO") {
+                              const cat = String(findFuzzyValue(row, ["Conta N0", "categoria"]) || "Outros").toUpperCase().trim();
+                              const val = Number(String(findFuzzyValue(row, ["Total", "valor"]) || "0").replace(/[^\d.-]/g, "")) || 0;
+                              categoryGroupMap.set(cat, (categoryGroupMap.get(cat) || 0) + val);
+                            }
+                          });
+                          const categoryPieData = Array.from(categoryGroupMap.entries()).map(([name, value]) => ({ name, value }));
+                          const COLORS = ["#8b5cf6", "#ec4899", "#3b82f6", "#eab308", "#10b981", "#f97316"];
+
+                          if (categoryPieData.length === 0) {
+                            return <div className="text-xs italic text-center text-zinc-500 py-10">Sem lançamentos realizados localizados.</div>;
+                          }
+
+                          return (
+                            <div className="flex-1 grid grid-cols-1 md:grid-cols-12 items-center">
+                              <div className="md:col-span-7 h-52">
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <PieChart>
+                                    <Pie
+                                      data={categoryPieData}
+                                      cx="50%"
+                                      cy="50%"
+                                      innerRadius={50}
+                                      outerRadius={80}
+                                      paddingAngle={3}
+                                      dataKey="value"
+                                    >
+                                      {categoryPieData.map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                      ))}
+                                    </Pie>
+                                    <Tooltip formatter={(value: any) => `R$ ${value.toLocaleString("pt-BR")}`} />
+                                  </PieChart>
+                                </ResponsiveContainer>
+                              </div>
+                              <div className="md:col-span-5 space-y-2 max-h-52 overflow-y-auto pr-1">
+                                {categoryPieData.map((item, idx) => (
+                                  <div key={idx} className="flex items-center gap-2 text-[10.5px] font-mono">
+                                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }} />
+                                    <span className="truncate uppercase text-zinc-400 font-bold max-w-[80px]" title={item.name}>{item.name}</span>
+                                    <span className="text-zinc-500 ml-auto font-black text-right">R$ {item.value.toLocaleString("pt-BR")}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Graph 3: Top 5 Cost Centers with highest actual expenditure (Full-width) */}
+                    <div className={`p-5 rounded-2xl border lg:col-span-2 ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                    }`}>
+                      <h4 className="text-xs font-bold uppercase font-mono text-purple-500 tracking-wider mb-1">Gargalos Orçamentários</h4>
+                      <h3 className="text-sm font-black font-sans uppercase mb-4">Top 5 Centros de Custo (Mais Consumidos)</h3>
+                      <div className="h-64">
+                        {(() => {
+                          const ccGroupMap = new Map();
+                          rawDetalhes.forEach(row => {
+                            const orig = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+                            if (orig === "REALIZADO") {
+                              const cc = String(findFuzzyValue(row, ["Descricao Centro de Custo", "Centro de Custo"]) || "Centro Geral").toUpperCase().trim();
+                              const val = Number(String(findFuzzyValue(row, ["Total", "valor"]) || "0").replace(/[^\d.-]/g, "")) || 0;
+                              ccGroupMap.set(cc, (ccGroupMap.get(cc) || 0) + val);
+                            }
+                          });
+                          const topCostCentersData = Array.from(ccGroupMap.entries())
+                            .map(([name, value]) => ({ name, value }))
+                            .sort((a, b) => b.value - a.value)
+                            .slice(0, 5);
+
+                          if (topCostCentersData.length === 0) {
+                            return <div className="text-xs italic text-center text-zinc-500 py-10">Sem lançamentos realizados para processar centros de custo.</div>;
+                          }
+
+                          return (
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={topCostCentersData} layout="vertical">
+                                <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                <XAxis type="number" fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                                <YAxis dataKey="name" type="category" width={150} fontSize={9} stroke={isL ? "#475569" : "#a1a1aa"} />
+                                <Tooltip formatter={(value: any) => `R$ ${value.toLocaleString("pt-BR")}`} />
+                                <Bar dataKey="value" name="Consumo Realizado" fill="#ec4899" radius={[0, 4, 4, 0]} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          );
+                        })()}
+                      </div>
+                    </div>
                   </div>
                 )}
               </motion.div>
             )}
 
-            {activeDiretoriaTab === "detalhamento" && (
+            {activeDiretoriaTab === "analise" && (
+              <motion.div 
+                key="tab-analise"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="space-y-6"
+              >
+                {/* Comparison Header */}
+                <div className={`p-5 rounded-2xl border ${
+                  isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-250 shadow-sm" : "bg-zinc-950 border-zinc-900"
+                }`}>
+                  <h3 className="text-xs uppercase font-mono tracking-widest font-black text-purple-600 dark:text-purple-400 mb-0.5">⚖️ Centro de Inteligência Analítica</h3>
+                  <h2 className="text-lg font-black font-sans uppercase mb-1">Análise Comparativa de Arquivos</h2>
+                  <p className="text-xs text-zinc-500 max-w-3xl leading-relaxed">
+                    Selecione e compare dois ou mais arquivos de repasse ou extratos de lançamentos orçamentários para contrastar planejamentos, desvios e execuções em tempo real.
+                  </p>
+                </div>
+
+                {/* File selector or empty state */}
+                {(() => {
+                  const orcamentoFiles = uploadedFiles.filter(f => f.service === "orcamento");
+
+                  const handleGenerateDemoFiles = () => {
+                    const fileA_csv = `Organização,Conta N0,Descricao Centro de Custo,Descricao Conta N6,Origem,Total
+SESI,PESSOAL,PRODUÇÃO EDUCACIONAL,SALÁRIOS E ENCARGOS,PLANEJADO,240000
+SESI,PESSOAL,PRODUÇÃO EDUCACIONAL,SALÁRIOS E ENCARGOS,REALIZADO,230000
+SENAI,SERVIÇOS DE TERCEIROS,MANUTENÇÃO DE TECNOLOGIA,CONSULTORIA TÉCNICA,PLANEJADO,110000
+SENAI,SERVIÇOS DE TERCEIROS,MANUTENÇÃO DE TECNOLOGIA,CONSULTORIA TÉCNICA,REALIZADO,135000
+FIRJAN,PRODUTOS & INSUMOS,LABORATÓRIO QUÍMICO SUL,INSUMOS ANALÍTICOS,PLANEJADO,80000
+FIRJAN,PRODUTOS & INSUMOS,LABORATÓRIO QUÍMICO SUL,INSUMOS ANALÍTICOS,REALIZADO,95000`;
+
+                    const fileB_csv = `Organização,Conta N0,Descricao Centro de Custo,Descricao Conta N6,Origem,Total
+SESI,PESSOAL,PRODUÇÃO EDUCACIONAL,SALÁRIOS E ENCARGOS,PLANEJADO,250000
+SESI,PESSOAL,PRODUÇÃO EDUCACIONAL,SALÁRIOS E ENCARGOS,REALIZADO,245000
+SENAI,SERVIÇOS DE TERCEIROS,MANUTENÇÃO DE TECNOLOGIA,CONSULTORIA TÉCNICA,PLANEJADO,130000
+SENAI,SERVIÇOS DE TERCEIROS,MANUTENÇÃO DE TECNOLOGIA,CONSULTORIA TÉCNICA,REALIZADO,155000
+FIRJAN,PRODUTOS & INSUMOS,LABORATÓRIO QUÍMICO SUL,INSUMOS ANALÍTICOS,PLANEJADO,90000
+FIRJAN,PRODUTOS & INSUMOS,LABORATÓRIO QUÍMICO SUL,INSUMOS ANALÍTICOS,REALIZADO,125000`;
+
+                    const b64A = window.btoa(unescape(encodeURIComponent(fileA_csv)));
+                    const b64B = window.btoa(unescape(encodeURIComponent(fileB_csv)));
+
+                    const idA = "upl-demo-a-" + Math.random().toString(36).substr(2, 5);
+                    const idB = "upl-demo-b-" + Math.random().toString(36).substr(2, 5);
+
+                    setUploadedFiles(prev => [
+                      ...prev,
+                      {
+                        id: idA,
+                        name: "Planilha_Orcamento_Sesi_Senai_Abril.csv",
+                        size: "2 KB",
+                        type: "text/csv",
+                        uploadedAt: new Date().toISOString().split("T")[0],
+                        status: "sucesso",
+                        content: b64A,
+                        service: "orcamento"
+                      },
+                      {
+                        id: idB,
+                        name: "Planilha_Orcamento_Sesi_Senai_Maio_Atualizado.csv",
+                        size: "2 KB",
+                        type: "text/csv",
+                        uploadedAt: new Date().toISOString().split("T")[0],
+                        status: "sucesso",
+                        content: b64B,
+                        service: "orcamento"
+                      }
+                    ]);
+
+                    setCompareFileAId(idA);
+                    setCompareFileBId(idB);
+                    addToast("Planilhas de Simulação Criadas", "Duas planilhas de orçamentos (Abril e Maio) foram adicionadas com sucesso para comparação side-by-side!", "success");
+                  };
+
+                  if (orcamentoFiles.length < 2) {
+                    return (
+                      <div className={`p-10 rounded-2xl border text-center ${
+                        isL ? "bg-slate-50 border-slate-200" : "bg-zinc-950/40 border-zinc-900"
+                      }`}>
+                        <FileSpreadsheet className="w-12 h-12 text-purple-400/50 mx-auto mb-3" />
+                        <h4 className="text-sm font-bold uppercase font-sans">Compare Múltiplos Arquivos orçamentários</h4>
+                        <p className="text-xs text-zinc-500 max-w-md mx-auto mt-1 mb-5 leading-relaxed">
+                          Você precisa de pelo menos <strong>dois arquivos de orçamento</strong> carregados na plataforma para poder contrastar as planilhas lado a lado.
+                        </p>
+                        <button
+                          onClick={handleGenerateDemoFiles}
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-2 mx-auto cursor-pointer uppercase font-mono tracking-wider"
+                        >
+                          <Sparkles className="w-4 h-4" /> Gerar Arquivos de Demonstração para Análise
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  // Selection layout
+                  return (
+                    <div className="space-y-6">
+                      {/* Comparison Mode Selector */}
+                      <div className="flex items-center gap-2 p-1 bg-zinc-900/40 dark:bg-zinc-950/40 rounded-xl border border-zinc-850/60 max-w-md">
+                        <button
+                          type="button"
+                          onClick={() => setCompareMode("side")}
+                          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                            compareMode === "side"
+                              ? "bg-purple-600 text-white shadow-md font-extrabold"
+                              : "text-zinc-400 hover:text-zinc-250"
+                          }`}
+                        >
+                          ⚖️ Lado a Lado (2 Arquivos)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCompareMode("multi")}
+                          className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                            compareMode === "multi"
+                              ? "bg-purple-600 text-white shadow-md font-extrabold"
+                              : "text-zinc-400 hover:text-zinc-250"
+                          }`}
+                        >
+                          🗂️ Matriz Multi-Arquivos ({orcamentoFiles.length})
+                        </button>
+                      </div>
+
+                      {compareMode === "multi" ? (
+                        // Multi-file comparison matrix
+                        (() => {
+                          const activeSelectCompareIds = selectedCompareIds.length > 0 
+                            ? selectedCompareIds 
+                            : orcamentoFiles.map(f => f.id);
+
+                          const selectedFilesData = orcamentoFiles
+                            .filter(f => activeSelectCompareIds.includes(f.id))
+                            .map(f => {
+                              const stats = getFileStats(f);
+                              return {
+                                id: f.id,
+                                name: f.name,
+                                uploadedAt: f.uploadedAt,
+                                size: f.size,
+                                type: stats.type,
+                                records: stats.records,
+                                planejado: stats.planejado,
+                                realizado: stats.realizado,
+                                rate: stats.executionRate,
+                                isDetalhes: stats.isDetalhes,
+                                isRazao: stats.isRazao,
+                                fileObj: f
+                              };
+                            });
+
+                          const multiChartData = selectedFilesData.map(d => ({
+                            name: d.name.length > 20 ? d.name.substring(0, 17) + "..." : d.name,
+                            "Planejado (Orçado)": d.planejado,
+                            "Realizado (Gasto)": d.realizado,
+                          }));
+
+                          return (
+                            <div className="space-y-6">
+                              {/* Selection Checklist */}
+                              <div className={`p-4 border rounded-2xl ${
+                                isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
+                              }`}>
+                                <div className="flex justify-between items-center mb-3">
+                                  <label className="text-[10px] uppercase font-mono text-zinc-500 block font-bold">Selecione os Arquivos para Consolidar</label>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (selectedCompareIds.length === orcamentoFiles.length) {
+                                        setSelectedCompareIds([]);
+                                      } else {
+                                        setSelectedCompareIds(orcamentoFiles.map(f => f.id));
+                                      }
+                                    }}
+                                    className="text-[10px] font-mono hover:underline text-purple-400 bg-transparent border-none outline-none cursor-pointer uppercase font-bold"
+                                  >
+                                    {selectedCompareIds.length === orcamentoFiles.length ? "Desmarcar Todos" : "Selecionar Todos"}
+                                  </button>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  {orcamentoFiles.map(f => {
+                                    const isSel = activeSelectCompareIds.includes(f.id);
+                                    return (
+                                      <button
+                                        type="button"
+                                        key={f.id}
+                                        onClick={() => {
+                                          if (selectedCompareIds.includes(f.id)) {
+                                            setSelectedCompareIds(prev => prev.filter(id => id !== f.id));
+                                          } else {
+                                            setSelectedCompareIds(prev => [...prev, f.id]);
+                                          }
+                                        }}
+                                        className={`px-3 py-1.5 rounded-lg border text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                                          isSel
+                                            ? "bg-purple-600/15 border-purple-500 text-purple-400"
+                                            : "bg-zinc-900/10 border-zinc-800 text-zinc-500 hover:text-zinc-300"
+                                        }`}
+                                      >
+                                        <input 
+                                          type="checkbox" 
+                                          checked={isSel} 
+                                          onChange={() => {}} // handled by click
+                                          className="pointer-events-none rounded border-zinc-800 text-purple-600 focus:ring-purple-500 w-3 h-3" 
+                                        />
+                                        <span>{f.name}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Matrix Table */}
+                              <div className={`border rounded-2xl overflow-hidden ${
+                                isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200" : "bg-[#0b0a14] border-zinc-900"
+                              }`}>
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-left border-collapse">
+                                    <thead>
+                                      <tr className="bg-zinc-900/50 dark:bg-black/50 text-zinc-400 font-mono text-[10px] uppercase border-b border-zinc-800">
+                                        <th className="p-3.5 pl-5 font-bold">Relatório Carregado</th>
+                                        <th className="p-3.5 font-bold">Tipo</th>
+                                        <th className="p-3.5 text-right font-bold">Registros</th>
+                                        <th className="p-3.5 text-right font-bold">Teto Orçado</th>
+                                        <th className="p-3.5 text-right font-bold">Consumo Realizado</th>
+                                        <th className="p-3.5 text-right font-bold">Diferença / Saving</th>
+                                        <th className="p-3.5 text-center font-bold">Execução</th>
+                                        <th className="p-3.5 pr-5 text-center font-bold">Ações</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-zinc-850/30 text-xs text-slate-800 dark:text-zinc-300">
+                                      {selectedFilesData.map((d) => {
+                                        const saldo = d.planejado - d.realizado;
+                                        const isEconomia = saldo >= 0;
+                                        return (
+                                          <tr key={d.id} className="hover:bg-zinc-900/20">
+                                            <td className="p-3.5 pl-5 font-sans font-bold text-slate-800 dark:text-zinc-250 max-w-[180px] truncate" title={d.name}>
+                                              {d.name}
+                                            </td>
+                                            <td className="p-3.5">
+                                              <span className={`px-1.5 py-0.5 rounded text-[8.5px] uppercase font-bold font-mono ${
+                                                d.isDetalhes ? "bg-purple-500/10 text-purple-400" : d.isRazao ? "bg-emerald-500/10 text-emerald-400" : "bg-zinc-500/10 text-zinc-400"
+                                              }`}>
+                                                {d.type}
+                                              </span>
+                                            </td>
+                                            <td className="p-3.5 text-right font-mono font-medium">{d.records}</td>
+                                            <td className="p-3.5 text-right font-mono font-medium">R$ {d.planejado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+                                            <td className="p-3.5 text-right font-mono font-medium text-amber-500">R$ {d.realizado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+                                            <td className={`p-3.5 text-right font-mono font-bold ${isEconomia ? "text-emerald-500" : "text-red-500"}`}>
+                                              R$ {Math.abs(saldo).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                              <span className="text-[8.5px] block font-normal opacity-85">{isEconomia ? "Sobrando" : "Estourado"}</span>
+                                            </td>
+                                            <td className="p-3.5 text-center">
+                                              <div className="flex items-center justify-center gap-1.5">
+                                                <span className="font-bold font-mono">{d.rate.toFixed(1)}%</span>
+                                                <div className="w-10 bg-zinc-850 rounded-full h-1.5 overflow-hidden">
+                                                  <div 
+                                                    className="bg-purple-600 h-1.5" 
+                                                    style={{ width: `${Math.min(100, d.rate)}%` }} 
+                                                  />
+                                                </div>
+                                              </div>
+                                            </td>
+                                            <td className="p-3.5 pr-5 text-center">
+                                              <div className="flex items-center justify-center gap-1">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => activateFile(d.fileObj)}
+                                                  className="px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white font-mono text-[9px] uppercase font-bold rounded-md transition cursor-pointer"
+                                                  title="Definir como fonte ativa de dados"
+                                                >
+                                                  Ativar Fonte
+                                                </button>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              {/* Matrix Chart */}
+                              <div className={`p-5 rounded-2xl border ${
+                                isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                              }`}>
+                                <h4 className="text-xs font-bold uppercase font-mono text-purple-500 tracking-wider mb-4">Gráfico Consolidado da Matriz Comparativa</h4>
+                                <div className="h-64">
+                                  <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={multiChartData}>
+                                      <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                      <XAxis dataKey="name" fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                                      <YAxis fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                                      <Tooltip formatter={(value: any) => `R$ ${value.toLocaleString("pt-BR")}`} />
+                                      <Legend style={{ fontSize: "11px" }} />
+                                      <Bar dataKey="Planejado (Orçado)" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                                      <Bar dataKey="Realizado (Gasto)" fill="#ec4899" radius={[4, 4, 0, 0]} />
+                                    </BarChart>
+                                  </ResponsiveContainer>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()
+                      ) : (
+                        // Side-by-Side selector layout
+                        <>
+                          <div className={`p-4 border rounded-2xl ${
+                            isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
+                          }`}>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[10px] uppercase font-mono text-zinc-500 block font-bold">Planilha de Referência (Base A)</label>
+                                <select
+                                  value={compareFileAId}
+                                  onChange={(e) => setCompareFileAId(e.target.value)}
+                                  className={`w-full border rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer ${
+                                    isL ? "bg-white border-slate-300 text-slate-800" : "bg-zinc-950 border-zinc-800 text-white"
+                                  }`}
+                                >
+                                  <option value="">-- Selecione o Arquivo A --</option>
+                                  {orcamentoFiles.map(f => (
+                                    <option key={f.id} value={f.id}>{f.name} ({f.uploadedAt})</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[10px] uppercase font-mono text-zinc-500 block font-bold">Planilha de Comparação (Base B)</label>
+                                <select
+                                  value={compareFileBId}
+                                  onChange={(e) => setCompareFileBId(e.target.value)}
+                                  className={`w-full border rounded-lg p-2 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer ${
+                                    isL ? "bg-white border-slate-300 text-slate-800" : "bg-zinc-950 border-zinc-800 text-white"
+                                  }`}
+                                >
+                                  <option value="">-- Selecione o Arquivo B --</option>
+                                  {orcamentoFiles.map(f => (
+                                    <option key={f.id} value={f.id}>{f.name} ({f.uploadedAt})</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Display analysis results if both files are selected */}
+                          {(() => {
+                            if (!compareFileAId || !compareFileBId) {
+                              return (
+                                <div className="p-10 text-center italic text-zinc-500 text-xs font-mono border border-dashed rounded-2xl border-zinc-800">
+                                  Selecione os dois arquivos acima para calcular e renderizar o relatório analítico side-by-side.
+                                </div>
+                              );
+                            }
+
+                            if (compareFileAId === compareFileBId) {
+                              return (
+                                <div className="p-10 text-center text-amber-500 text-xs font-mono border border-dashed rounded-2xl border-zinc-800">
+                                  ⚠️ Por favor, selecione dois arquivos diferentes para poder realizar a comparação side-by-side.
+                                </div>
+                              );
+                            }
+
+                            const fileA = orcamentoFiles.find(f => f.id === compareFileAId);
+                            const fileB = orcamentoFiles.find(f => f.id === compareFileBId);
+
+                            if (!fileA || !fileB) return null;
+
+                            const parseFileToRows = (file: any): any[] => {
+                              if (!file || !file.content) return [];
+                              try {
+                                let cleanBase64 = file.content;
+                                if (cleanBase64.includes(",")) {
+                                  cleanBase64 = cleanBase64.split(",")[1];
+                                }
+                                cleanBase64 = cleanBase64.replace(/\s/g, "");
+                                const binaryString = window.atob(cleanBase64);
+                                const len = binaryString.length;
+                                const bytes = new Uint8Array(len);
+                                for (let i = 0; i < len; i++) {
+                                  bytes[i] = binaryString.charCodeAt(i);
+                                }
+                                const ext = file.name.split('.').pop()?.toLowerCase();
+                                
+                                if (ext === "csv") {
+                                  const csvText = new TextDecoder("utf-8").decode(bytes);
+                                  const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+                                  return parsed.data || [];
+                                } else if (ext === "xlsx" || ext === "xls") {
+                                  const workbook = XLSX.read(bytes, { type: "array" });
+                                  const sheetName = workbook.SheetNames[0];
+                                  const worksheet = workbook.Sheets[sheetName];
+                                  return XLSX.utils.sheet_to_json(worksheet) || [];
+                                }
+                              } catch (e) {
+                                console.error(e);
+                              }
+                              return [];
+                            };
+
+                            const rowsA = parseFileToRows(fileA).filter(r => r && typeof r === "object");
+                            const rowsB = parseFileToRows(fileB).filter(r => r && typeof r === "object");
+
+                            // Calculate aggregates for File A
+                            let planejadoA = 0;
+                            let realizadoA = 0;
+                            rowsA.forEach(row => {
+                              const orig = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+                              const valVal = findFuzzyValue(row, ["Total", "valor"]);
+                              const val = Number(String(valVal || "0").replace(/[^\d.-]/g, "")) || 0;
+                              if (orig === "PLANEJADO") planejadoA += val;
+                              else if (orig === "REALIZADO") realizadoA += val;
+                            });
+
+                            // Calculate aggregates for File B
+                            let planejadoB = 0;
+                            let realizadoB = 0;
+                            rowsB.forEach(row => {
+                              const orig = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+                              const valVal = findFuzzyValue(row, ["Total", "valor"]);
+                              const val = Number(String(valVal || "0").replace(/[^\d.-]/g, "")) || 0;
+                              if (orig === "PLANEJADO") planejadoB += val;
+                              else if (orig === "REALIZADO") realizadoB += val;
+                            });
+
+                            const executionRateA = planejadoA > 0 ? (realizadoA / planejadoA) * 100 : 0;
+                            const executionRateB = planejadoB > 0 ? (realizadoB / planejadoB) * 100 : 0;
+
+                            const comparisonChartData = [
+                              { name: "Orçado Planejado", "Arquivo A": planejadoA, "Arquivo B": planejadoB },
+                              { name: "Lançado Realizado", "Arquivo A": realizadoA, "Arquivo B": realizadoB }
+                            ];
+
+                            const handleSyncSelectedFile = (which: "A" | "B") => {
+                              const selectedFile = which === "A" ? fileA : fileB;
+                              const selectedRows = which === "A" ? rowsA : rowsB;
+                              
+                              setRawDetalhes(selectedRows);
+                              localStorage.setItem("onehub_rawDetalhes", JSON.stringify(selectedRows));
+                              
+                              // Also compile Cost Centers
+                              const ccMap = new Map();
+                              selectedRows.forEach((row: any, index: number) => {
+                                const ccName = String(findFuzzyValue(row, ["Descricao Centro de Custo", "Centro de Custo", "cc"]) || "Centro Geral");
+                                const dTotalVal = findFuzzyValue(row, ["Total", "valor", "soma", "total_"]);
+                                const dTotal = Number(String(dTotalVal || "0").replace(/[^\d.-]/g, '')) || 0;
+                                const dOrigem = String(findFuzzyValue(row, ["Origem", "tipo"]) || "").toUpperCase().trim();
+                                const orgVal = String(findFuzzyValue(row, ["Organização", "organizacao", "empresa", "unidade"]) || "").toUpperCase();
+                                const unit = orgVal.includes("SENAI") ? "SENAI" : orgVal.includes("SESI") ? "SESI" : "FIRJAN";
+                                const n0Category = String(findFuzzyValue(row, ["Conta N0", "categoria", "categoria n0"]) || "Outros");
+
+                                if (!ccMap.has(ccName)) {
+                                  ccMap.set(ccName, {
+                                    id: `CC-${100 + index}`,
+                                    name: ccName,
+                                    owner: "Marília Moreira de Melo Brito",
+                                    budgetLimit: 0,
+                                    allocated: 0,
+                                    spent: 0,
+                                    status: "Excelente",
+                                    unit: unit,
+                                    product: n0Category
+                                  });
+                                }
+                                const item = ccMap.get(ccName);
+                                if (dOrigem === "PLANEJADO") {
+                                  item.allocated += dTotal;
+                                  item.budgetLimit += dTotal * 1.1;
+                                } else if (dOrigem === "REALIZADO") {
+                                  item.spent += dTotal;
+                                }
+                              });
+
+                              const parsedCCs = Array.from(ccMap.values()).map(item => {
+                                const ratio = item.spent / (item.allocated || 1);
+                                let currentStatus: any = "Excelente";
+                                if (ratio >= 0.95) currentStatus = "Crítico";
+                                else if (ratio >= 0.75) currentStatus = "Atenção";
+                                else if (ratio >= 0.40) currentStatus = "Saudável";
+                                return { ...item, status: currentStatus };
+                              });
+
+                              if (parsedCCs.length > 0) {
+                                setCostCenters(parsedCCs);
+                              }
+
+                              addToast("Arquivo Sincronizado", `Os dados do arquivo "${selectedFile.name}" foram sincronizados com sucesso como fonte ativa de dados!`, "success");
+                            };
+
+                            return (
+                              <div className="space-y-6">
+                                {/* Comparison Side-by-Side Cards */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* File A Summary Card */}
+                                  <div className={`p-5 rounded-2xl border ${
+                                    isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                                  }`}>
+                                    <div className="flex justify-between items-start mb-4">
+                                      <div>
+                                        <span className="text-[10px] font-mono uppercase bg-purple-500/10 text-purple-400 px-2 py-0.5 rounded border border-purple-500/15">Base de Referência A</span>
+                                        <h4 className="text-sm font-black font-sans uppercase truncate mt-2 max-w-[220px]" title={fileA.name}>{fileA.name}</h4>
+                                        <p className="text-[10px] text-zinc-500 font-mono mt-0.5">Carregado em: {fileA.uploadedAt}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSyncSelectedFile("A")}
+                                        className="px-2.5 py-1 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 rounded text-[10px] font-mono font-bold transition border border-purple-500/20 cursor-pointer"
+                                      >
+                                        ATIVAR SINC
+                                      </button>
+                                    </div>
+
+                                    <div className="space-y-2 text-xs font-mono">
+                                      <div className="flex justify-between border-b border-zinc-850/40 pb-1.5">
+                                        <span className="text-zinc-500">Total de Registros:</span>
+                                        <span className="font-bold text-white">{rowsA.length}</span>
+                                      </div>
+                                      <div className="flex justify-between border-b border-zinc-850/40 pb-1.5">
+                                        <span className="text-zinc-500">Planejado (Orçado):</span>
+                                        <span className="font-bold text-white">R$ {planejadoA.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                      </div>
+                                      <div className="flex justify-between border-b border-zinc-850/40 pb-1.5">
+                                        <span className="text-zinc-500">Realizado (Auditoria):</span>
+                                        <span className="font-bold text-amber-500">R$ {realizadoA.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-zinc-500">Taxa de Execução:</span>
+                                        <span className="font-bold text-purple-400">{executionRateA.toFixed(1)}%</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* File B Summary Card */}
+                                  <div className={`p-5 rounded-2xl border ${
+                                    isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                                  }`}>
+                                    <div className="flex justify-between items-start mb-4">
+                                      <div>
+                                        <span className="text-[10px] font-mono uppercase bg-pink-500/10 text-pink-400 px-2 py-0.5 rounded border border-pink-500/15">Base de Referência B</span>
+                                        <h4 className="text-sm font-black font-sans uppercase truncate mt-2 max-w-[220px]" title={fileB.name}>{fileB.name}</h4>
+                                        <p className="text-[10px] text-zinc-500 font-mono mt-0.5">Carregado em: {fileB.uploadedAt}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSyncSelectedFile("B")}
+                                        className="px-2.5 py-1 bg-purple-600/10 hover:bg-purple-600/20 text-purple-400 rounded text-[10px] font-mono font-bold transition border border-purple-500/20 cursor-pointer"
+                                      >
+                                        ATIVAR SINC
+                                      </button>
+                                    </div>
+
+                                    <div className="space-y-2 text-xs font-mono">
+                                      <div className="flex justify-between border-b border-zinc-850/40 pb-1.5">
+                                        <span className="text-zinc-500">Total de Registros:</span>
+                                        <span className="font-bold text-white">{rowsB.length}</span>
+                                      </div>
+                                      <div className="flex justify-between border-b border-zinc-850/40 pb-1.5">
+                                        <span className="text-zinc-500">Planejado (Orçado):</span>
+                                        <span className="font-bold text-white">R$ {planejadoB.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                      </div>
+                                      <div className="flex justify-between border-b border-zinc-850/40 pb-1.5">
+                                        <span className="text-zinc-500">Realizado (Auditoria):</span>
+                                        <span className="font-bold text-amber-500">R$ {realizadoB.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-zinc-500">Taxa de Execução:</span>
+                                        <span className="font-bold text-pink-400">{executionRateB.toFixed(1)}%</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Aggregated Variance KPI and Chart */}
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
+                                  {/* Comparative aggregate variance */}
+                                  <div className={`p-5 rounded-2xl border h-full flex flex-col justify-center ${
+                                    isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                                  }`}>
+                                    <h4 className="text-xs font-bold uppercase font-mono text-purple-500 tracking-wider mb-2">Variação Realizada Inter-Arquivo</h4>
+                                    <h3 className="text-2xl font-black font-mono text-white">
+                                      R$ {Math.abs(realizadoB - realizadoA).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                    </h3>
+                                    <p className="text-[11px] text-zinc-500 leading-relaxed mt-2">
+                                      {realizadoB >= realizadoA ? (
+                                        <span className="text-red-400 font-bold">▲ Aumento de {(((realizadoB - realizadoA) / (realizadoA || 1)) * 100).toFixed(1)}%</span>
+                                      ) : (
+                                        <span className="text-emerald-400 font-bold">▼ Economia de {(((realizadoA - realizadoB) / (realizadoA || 1)) * 100).toFixed(1)}%</span>
+                                      )} em despesas efetivas auditadas do arquivo B frente ao arquivo A.
+                                    </p>
+                                  </div>
+
+                                  {/* Recharts Side-by-Side comparison */}
+                                  <div className={`p-5 rounded-2xl border lg:col-span-2 ${
+                                    isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-xs" : "bg-[#0b0a14] border-zinc-900"
+                                  }`}>
+                                    <h4 className="text-xs font-bold uppercase font-mono text-purple-500 tracking-wider mb-4">Gráfico Comparativo Evolutivo</h4>
+                                    <div className="h-52">
+                                      <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={comparisonChartData}>
+                                          <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                                          <XAxis dataKey="name" fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                                          <YAxis fontSize={10} stroke={isL ? "#475569" : "#a1a1aa"} />
+                                          <Tooltip formatter={(value: any) => `R$ ${value.toLocaleString("pt-BR")}`} />
+                                          <Legend style={{ fontSize: "11px" }} />
+                                          <Bar dataKey="Arquivo A" name="Arquivo Referência A" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                                          <Bar dataKey="Arquivo B" name="Arquivo Comparativo B" fill="#ec4899" radius={[4, 4, 0, 0]} />
+                                        </BarChart>
+                                      </ResponsiveContainer>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+              </motion.div>
+            )}
+
+            {activeDiretoriaTab === "dados" && (
+              <motion.div 
+                key="tab-dados"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="space-y-4"
+              >
+                {/* View Mode Toggle */}
+                <div className="flex items-center gap-2 p-1 bg-zinc-900/40 dark:bg-zinc-950/40 rounded-xl border border-zinc-850/60 max-w-xl">
+                  <button
+                    onClick={() => setIsCrudMode(false)}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                      !isCrudMode
+                        ? "bg-purple-600 text-white shadow-md font-extrabold"
+                        : "text-zinc-400 hover:text-zinc-250"
+                    }`}
+                  >
+                    <span>📊 Visão Cruzada Consolidada (DRE)</span>
+                  </button>
+                  <button
+                    onClick={() => setIsCrudMode(true)}
+                    className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                      isCrudMode
+                        ? "bg-purple-600 text-white shadow-md font-extrabold"
+                        : "text-zinc-400 hover:text-zinc-250"
+                    }`}
+                  >
+                    <span>✏️ Gerenciador CRUD de Lançamentos (Marília)</span>
+                  </button>
+                </div>
+
+                {!isCrudMode ? (
+                  <>
+                    {/* Filtration bar inside drilling table */}
+                    <div className={`p-4 border rounded-xl flex flex-wrap items-center justify-between gap-4 ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
+                    }`}>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Instituição</label>
+                          <select
+                            value={dirFilterOrg}
+                            onChange={(e) => setDirFilterOrg(e.target.value)}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
+                              isL ? "bg-white text-slate-800" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          >
+                            <option value="TODAS">TODAS AS INSTITUIÇÕES</option>
+                            <option value="SESI">SESI</option>
+                            <option value="SENAI">SENAI</option>
+                            <option value="FIRJAN">FIRJAN / OUTROS</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Categoria N0</label>
+                          <select
+                            value={dirFilterConta}
+                            onChange={(e) => setDirFilterConta(e.target.value)}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
+                              isL ? "bg-white text-slate-800" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          >
+                            <option value="TODAS">TODAS AS CATEGORIAS</option>
+                            <option value="PESSOAL">PESSOAL</option>
+                            <option value="SERVIÇOS DE TERCEIROS">SERVIÇOS DE TERCEIROS</option>
+                            <option value="PRODUTOS & INSUMOS">PRODUTOS & INSUMOS</option>
+                            <option value="INVESTIMENTOS">INVESTIMENTOS</option>
+                            <option value="VIAGENS & LOGÍSTICA">VIAGENS & LOGÍSTICA</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <span className="text-[10px] font-mono text-zinc-500 uppercase">
+                        Exibindo <strong>{matrixTableData.length}</strong> conta(s) cruzada(s)
+                      </span>
+                    </div>
+
+                    {/* Grid Table */}
+                    <div className={`border rounded-xl overflow-hidden ${
+                      isC ? "border-[#FFFF00]" : "border-zinc-300 dark:border-zinc-800"
+                    }`}>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs font-sans">
+                          <thead className={`font-mono text-[10px] uppercase font-bold border-b ${
+                            isL ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-zinc-950 border-zinc-850 text-zinc-400"
+                          }`}>
+                            <tr>
+                              <th className="py-2.5 px-4">Categoria (N0)</th>
+                              <th className="py-2.5 px-3">Centro de Custo Target</th>
+                              <th className="py-2.5 px-3">Conta N6 (Razão)</th>
+                              <th className="py-2.5 px-3 text-right">Planejado YTD</th>
+                              <th className="py-2.5 px-3 text-right">Realizado Caixa</th>
+                              <th className="py-2.5 px-3 text-right">Variação (R$)</th>
+                              <th className="py-2.5 px-4 text-center">Farol Performance</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-300 dark:divide-zinc-800/40">
+                            {matrixTableData.map((row: any, index: number) => {
+                              const diff = row.realizado - row.planejado;
+                              const ratio = row.realizado / (row.planejado || 1);
+                              const percent = Math.round(ratio * 100);
+                              
+                              let statusLabel = "Excelente";
+                              let badgeClass = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+                              if (percent > 100) {
+                                statusLabel = "Estouro";
+                                badgeClass = "bg-red-500/10 text-red-400 border-red-500/20";
+                              } else if (percent > 85) {
+                                statusLabel = "Atenção";
+                                badgeClass = "bg-amber-500/10 text-amber-400 border-amber-500/20";
+                              } else if (percent > 40) {
+                                statusLabel = "Saudável";
+                                badgeClass = "bg-purple-500/10 text-purple-400 border-purple-500/20";
+                              }
+
+                              const cleanCat = !row.cat || String(row.cat).toLowerCase() === "undefined" || String(row.cat).toLowerCase() === "null" ? "Outros" : String(row.cat);
+                              const cleanCC = !row.cc || String(row.cc).toLowerCase() === "undefined" || String(row.cc).toLowerCase() === "null" ? "Geral Administração" : String(row.cc);
+                              const cleanAccount6 = !row.account6 || String(row.account6).toLowerCase() === "undefined" || String(row.account6).toLowerCase() === "null" ? "Não Identificado" : String(row.account6);
+
+                              return (
+                                <tr key={index} className={`hover:bg-purple-500/[0.02] transition font-mono ${
+                                  isL ? "text-slate-700" : "text-zinc-300"
+                                }`}>
+                                  <td className="py-3 px-4 font-bold text-purple-600 dark:text-purple-400 truncate max-w-[130px] uppercase">{cleanCat}</td>
+                                  <td className="py-3 px-3 uppercase truncate max-w-[180px] font-bold">{cleanCC}</td>
+                                  <td className="py-3 px-3 truncate max-w-[160px]">{cleanAccount6}</td>
+                                  <td className="py-3 px-3 text-right text-slate-500 font-bold">R$ {row.planejado.toLocaleString("pt-BR")}</td>
+                                  <td className="py-3 px-3 text-right text-amber-600 dark:text-amber-500 font-extrabold">R$ {row.realizado.toLocaleString("pt-BR")}</td>
+                                  <td className={`py-3 px-3 text-right font-black ${
+                                    diff <= 0 ? "text-emerald-600 dark:text-[#00E676]" : "text-red-500"
+                                  }`}>
+                                    {diff <= 0 ? "-" : "+"}R$ {Math.abs(diff).toLocaleString("pt-BR")}
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    <span className={`px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${badgeClass}`}>
+                                      {statusLabel} ({percent}%)
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+
+                            {matrixTableData.length === 0 && (
+                              <tr>
+                                <td colSpan={7} className="py-12 text-center text-zinc-500 italic font-mono">
+                                  Nenhuma linha localizada para os critérios de pesquisa. Carregue demonstrações no Painel acima.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Filtration and Action Bar */}
+                    <div className={`p-4 border rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 ${
+                      isC ? "bg-black border-[#FFFF00]" : isL ? "bg-slate-50 border-slate-200" : "bg-black/35 border-zinc-900"
+                    }`}>
+                      <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                        {/* Flow Select */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Fluxo Financeiro</label>
+                          <select
+                            value={crudFilterType}
+                            onChange={(e) => { setCrudFilterType(e.target.value as any); setCrudPage(1); }}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans ${
+                              isL ? "bg-white text-slate-800 animate-none" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          >
+                            <option value="TODOS">TODOS OS LANÇAMENTOS</option>
+                            <option value="RECEITAS">RECEITAS (FATURAMENTO / ENTRADAS)</option>
+                            <option value="DESPESAS">DESPESAS (CUSTOS / OPERAÇÃO)</option>
+                            <option value="INVESTIMENTOS">INVESTIMENTOS (CAPEX)</option>
+                          </select>
+                        </div>
+
+                        {/* Search Input */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] uppercase font-mono text-zinc-500 block">Filtro de Busca</label>
+                          <input
+                            type="text"
+                            placeholder="Buscar categoria, CC, conta, org..."
+                            value={crudSearch}
+                            onChange={(e) => { setCrudSearch(e.target.value); setCrudPage(1); }}
+                            className={`border rounded p-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 w-60 ${
+                              isL ? "bg-white text-slate-800 border-slate-300" : "bg-zinc-950 text-white border-zinc-800"
+                            }`}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Right-Side Add Button */}
+                      <button
+                        onClick={handleOpenCreateModal}
+                        className="w-full md:w-auto px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer uppercase"
+                      >
+                        <Plus className="w-4 h-4" /> Novo Lançamento
+                      </button>
+                    </div>
+
+                    {/* CRUD Table */}
+                    <div className={`border rounded-xl overflow-hidden ${
+                      isC ? "border-[#FFFF00]" : "border-zinc-300 dark:border-zinc-800"
+                    }`}>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs font-sans">
+                          <thead className={`font-mono text-[10px] uppercase font-bold border-b ${
+                            isL ? "bg-slate-100 text-slate-700 border-slate-200" : "bg-zinc-950 border-zinc-850 text-zinc-400"
+                          }`}>
+                            <tr>
+                              <th className="py-2.5 px-4">Org</th>
+                              <th className="py-2.5 px-3">Categoria (N0)</th>
+                              <th className="py-2.5 px-3">Grupo (N1)</th>
+                              <th className="py-2.5 px-3">Subgrupo (N2)</th>
+                              <th className="py-2.5 px-3">Centro de Custo</th>
+                              <th className="py-2.5 px-3">Conta N6 (Razão)</th>
+                              <th className="py-2.5 px-3 text-right">Total</th>
+                              <th className="py-2.5 px-3 text-center">Tipo</th>
+                              <th className="py-2.5 px-4 text-center">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-300 dark:divide-zinc-800/40">
+                            {filteredCrudRows.slice((crudPage - 1) * crudPageSize, crudPage * crudPageSize).map((row: any) => {
+                              // Blanks and undefined replacement formatting as requested by Marília
+                              const renderFuzzyCell = (val: string, fallback: string = "Geral") => {
+                                if (!val || val.trim() === "" || val.toLowerCase().includes("sem informação") || val.toLowerCase().includes("em branco") || val.toLowerCase() === "null" || val.toLowerCase() === "undefined") {
+                                  return (
+                                    <span className="text-zinc-500 font-bold italic text-[9.5px]">
+                                      {fallback}
+                                    </span>
+                                  );
+                                }
+                                return <span className="uppercase font-semibold">{val}</span>;
+                              };
+
+                              return (
+                                <tr key={row.__originalIndex} className={`hover:bg-purple-500/[0.02] transition font-mono ${
+                                  isL ? "text-slate-700" : "text-zinc-300"
+                                }`}>
+                                  <td className="py-3 px-4 font-bold">{row.orgVal || "SESI"}</td>
+                                  <td className="py-3 px-3 text-purple-600 dark:text-purple-400">{renderFuzzyCell(row.catVal, "OUTROS")}</td>
+                                  <td className="py-3 px-3">{renderFuzzyCell(row.n1Val, "ENCARGOS")}</td>
+                                  <td className="py-3 px-3">{renderFuzzyCell(row.n2Val, "SALÁRIOS")}</td>
+                                  <td className="py-3 px-3 truncate max-w-[150px]" title={row.ccVal}>
+                                    {renderFuzzyCell(row.ccVal, "SEDE RJ ADMIN")}
+                                  </td>
+                                  <td className="py-3 px-3 truncate max-w-[150px]" title={row.n6Val}>
+                                    {renderFuzzyCell(row.n6Val, "AUXÍLIOS")}
+                                  </td>
+                                  <td className="py-3 px-3 text-right font-black text-amber-500">
+                                    R$ {row.totalVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-3 px-3 text-center">
+                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${
+                                      row.origemVal === "PLANEJADO" 
+                                        ? "bg-blue-500/10 text-blue-400 border-blue-500/20" 
+                                        : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                    }`}>
+                                      {row.origemVal}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-4 text-center">
+                                    <div className="flex items-center justify-center gap-1.5">
+                                      <button
+                                        onClick={() => setViewingRow(row)}
+                                        className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-purple-400 hover:text-purple-300 border border-zinc-700 transition cursor-pointer"
+                                        title="Visualizar Detalhes"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleOpenEditModal(row)}
+                                        className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-555 hover:text-amber-400 border border-zinc-700 transition cursor-pointer"
+                                        title="Editar Lançamento"
+                                      >
+                                        <Edit className="w-3.5 h-3.5 text-amber-500" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteCrud(row.__originalIndex)}
+                                        className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-red-500 hover:text-red-400 border border-zinc-700 transition cursor-pointer"
+                                        title="Excluir Lançamento"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+
+                            {filteredCrudRows.length === 0 && (
+                              <tr>
+                                <td colSpan={9} className="py-12 text-center text-zinc-500 italic font-mono">
+                                  Nenhum lançamento localizado. Use "Novo Lançamento" acima ou carregue planilhas de repasses para preencher.
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination Controls */}
+                      {filteredCrudRows.length > crudPageSize && (
+                        <div className="flex items-center justify-between p-2 border-t border-zinc-800/20">
+                          <span className="text-[10px] font-mono text-zinc-500">
+                            Página {crudPage} de {Math.ceil(filteredCrudRows.length / crudPageSize)} ({filteredCrudRows.length} registros)
+                          </span>
+                          <div className="flex gap-2">
+                            <button
+                              disabled={crudPage === 1}
+                              onClick={() => setCrudPage(prev => Math.max(1, prev - 1))}
+                              className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-[10px] rounded hover:bg-zinc-800 font-mono disabled:opacity-40 disabled:hover:bg-zinc-900 cursor-pointer"
+                            >
+                              Anterior
+                            </button>
+                            <button
+                              disabled={crudPage * crudPageSize >= filteredCrudRows.length}
+                              onClick={() => setCrudPage(prev => prev + 1)}
+                              className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-[10px] rounded hover:bg-zinc-800 font-mono disabled:opacity-40 disabled:hover:bg-zinc-900 cursor-pointer"
+                            >
+                              Próxima
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Viewing Modal Detail Panel */}
+                {viewingRow && (
+                  <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className={`w-full max-w-md rounded-2xl p-6 border shadow-2xl ${
+                        isL ? "bg-white border-slate-250 text-slate-800 shadow-2xl" : "bg-[#0c0a15] border-purple-500/20 text-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between pb-3 border-b border-zinc-500/15">
+                        <h4 className="font-display font-black text-sm uppercase text-purple-600 dark:text-purple-450 flex items-center gap-2">
+                          🔍 Detalhamento do Lançamento
+                        </h4>
+                        <button
+                          onClick={() => setViewingRow(null)}
+                          className="text-zinc-450 hover:text-zinc-200 text-sm font-bold p-1"
+                        >
+                          ✕
+                        </button>
+                      </div>
+
+                      <div className="mt-4 space-y-3.5 text-xs font-mono">
+                        <div className="grid grid-cols-2 gap-4 border-b border-zinc-850 pb-2">
+                          <div>
+                            <span className="text-[10px] text-zinc-500 block uppercase">Organização</span>
+                            <strong className="text-sm text-white uppercase">{viewingRow.orgVal || "SESI"}</strong>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-zinc-500 block uppercase">Tipo de Fluxo</span>
+                            <span className={`inline-block px-1.5 py-0.2 rounded text-[9px] font-bold uppercase mt-1 ${
+                              viewingRow.origemVal === "PLANEJADO" 
+                                ? "bg-blue-500/15 text-blue-400 border border-blue-500/20" 
+                                : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"
+                            }`}>
+                              {viewingRow.origemVal}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="border-b border-zinc-850 pb-2">
+                          <span className="text-[10px] text-zinc-500 block uppercase">Categoria (Conta N0)</span>
+                          <strong className="text-white text-xs uppercase">{viewingRow.catVal || "OUTROS"}</strong>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 border-b border-zinc-850 pb-2">
+                          <div>
+                            <span className="text-[10px] text-zinc-500 block uppercase">Grupo (N1)</span>
+                            <span className="text-zinc-300 text-xs uppercase">{viewingRow.n1Val || "ENCARGOS"}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-zinc-500 block uppercase">Subgrupo (N2)</span>
+                            <span className="text-zinc-300 text-xs uppercase">{viewingRow.n2Val || "SALÁRIOS"}</span>
+                          </div>
+                        </div>
+
+                        <div className="border-b border-zinc-850 pb-2">
+                          <span className="text-[10px] text-zinc-500 block uppercase">Centro de Custo</span>
+                          <strong className="text-white text-xs uppercase">{viewingRow.ccVal || "SEDE RJ ADMINISTRAÇÃO"}</strong>
+                        </div>
+
+                        <div className="border-b border-zinc-850 pb-2">
+                          <span className="text-[10px] text-zinc-500 block uppercase">Conta N6 (Razão)</span>
+                          <strong className="text-purple-400 text-xs uppercase">{viewingRow.n6Val || "AUXÍLIO ALIMENTAÇÃO"}</strong>
+                        </div>
+
+                        <div className="pt-2">
+                          <span className="text-[10px] text-zinc-500 block uppercase">Valor Consolidado</span>
+                          <strong className="text-lg text-amber-500 font-bold font-mono">
+                            R$ {viewingRow.totalVal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex justify-end border-t border-zinc-500/15 pt-4">
+                        <button
+                          onClick={() => setViewingRow(null)}
+                          className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition cursor-pointer uppercase"
+                        >
+                          OK, Fechar
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+
+            {false && (
               <motion.div 
                 key="tab-detalhamento"
                 initial={{ opacity: 0 }}
@@ -1060,7 +2591,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                     onClick={() => setIsCrudMode(false)}
                     className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
                       !isCrudMode
-                        ? "bg-purple-650 text-white shadow-md font-extrabold"
+                        ? "bg-purple-600 text-white shadow-md font-extrabold"
                         : "text-zinc-400 hover:text-zinc-250"
                     }`}
                   >
@@ -1070,7 +2601,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                     onClick={() => setIsCrudMode(true)}
                     className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
                       isCrudMode
-                        ? "bg-purple-650 text-white shadow-md font-extrabold"
+                        ? "bg-purple-600 text-white shadow-md font-extrabold"
                         : "text-zinc-400 hover:text-zinc-250"
                     }`}
                   >
@@ -1167,7 +2698,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                                 <tr key={index} className={`hover:bg-purple-500/[0.02] transition font-mono ${
                                   isL ? "text-slate-700" : "text-zinc-300"
                                 }`}>
-                                  <td className="py-3 px-4 font-bold text-purple-650 dark:text-purple-400 truncate max-w-[130px] uppercase">{row.cat}</td>
+                                  <td className="py-3 px-4 font-bold text-purple-600 dark:text-purple-400 truncate max-w-[130px] uppercase">{row.cat}</td>
                                   <td className="py-3 px-3 uppercase truncate max-w-[180px] font-bold">{row.cc}</td>
                                   <td className="py-3 px-3 truncate max-w-[160px]">{row.account6}</td>
                                   <td className="py-3 px-3 text-right text-slate-500">R$ {row.planejado.toLocaleString("pt-BR")}</td>
@@ -1240,7 +2771,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                       {/* Right-Side Add Button */}
                       <button
                         onClick={handleOpenCreateModal}
-                        className="w-full md:w-auto px-4 py-2 bg-purple-650 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer uppercase"
+                        className="w-full md:w-auto px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 shadow cursor-pointer uppercase"
                       >
                         <Plus className="w-4 h-4" /> Novo Lançamento
                       </button>
@@ -1371,7 +2902,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                       initial={{ opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className={`w-full max-w-lg rounded-2xl p-6 border shadow-2xl ${
-                        isL ? "bg-white border-slate-250 text-slate-805 shadow-2xl" : "bg-[#0c0a15] border-purple-500/20 text-white"
+                        isL ? "bg-white border-slate-250 text-slate-800 shadow-2xl" : "bg-[#0c0a15] border-purple-500/20 text-white"
                       }`}
                     >
                       <div className="flex items-center justify-between pb-3 border-b border-zinc-500/15">
@@ -1418,7 +2949,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                         </div>
 
                         <div>
-                          <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Categoria (Conta N0)</label>
+                          <label className="block text-[10px] uppercase font-mono text-zinc-400 mb-1">Categoria (Conta N0)</label>
                           <input
                             type="text"
                             placeholder="Ex: PESSOAL, SERVIÇOS DE TERCEIROS, INVESTIMENTOS, RECEITAS"
@@ -1432,7 +2963,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
 
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Grupo (Conta N1)</label>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-400 mb-1">Grupo (Conta N1)</label>
                             <input
                               type="text"
                               placeholder="Opcional - Grupo"
@@ -1444,7 +2975,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Subgrupo (Conta N2)</label>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-400 mb-1">Subgrupo (Conta N2)</label>
                             <input
                               type="text"
                               placeholder="Opcional - Subgrupo"
@@ -1459,7 +2990,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
 
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Centro de Custo</label>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-400 mb-1">Centro de Custo</label>
                             <input
                               type="text"
                               placeholder="Ex: CENTRO DE CUSTO COORDENAÇÃO"
@@ -1471,7 +3002,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Conta N6 (Razão)</label>
+                            <label className="block text-[10px] uppercase font-mono text-zinc-400 mb-1">Conta N6 (Razão)</label>
                             <input
                               type="text"
                               placeholder="Ex: SERVIÇOS DE CONSULTORIA"
@@ -1485,7 +3016,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                         </div>
 
                         <div>
-                          <label className="block text-[10px] uppercase font-mono text-zinc-455 mb-1">Valor Total (R$)</label>
+                          <label className="block text-[10px] uppercase font-mono text-zinc-400 mb-1">Valor Total (R$)</label>
                           <input
                             type="number"
                             placeholder="0.00"
@@ -1507,7 +3038,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                         </button>
                         <button
                           onClick={handleSaveCrud}
-                          className="px-4 py-2 bg-purple-650 hover:bg-purple-600 text-white rounded-lg text-xs font-bold transition cursor-pointer uppercase"
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-600 text-white rounded-lg text-xs font-bold transition cursor-pointer uppercase"
                         >
                           Salvar Lançamento
                         </button>
@@ -1532,7 +3063,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                 }`}>
                   <div className="flex items-center gap-2 mb-2">
                     <Search className="w-5 h-5 text-purple-500" />
-                    <h3 className="text-xs uppercase font-mono tracking-widest font-black text-purple-650 dark:text-purple-400">Ledger Audit Search</h3>
+                    <h3 className="text-xs uppercase font-mono tracking-widest font-black text-purple-600 dark:text-purple-400">Ledger Audit Search</h3>
                     <h2 className="text-sm font-black font-sans uppercase">Acompanhamento e Auditoria de Notas Fiscais</h2>
                   </div>
 
@@ -1608,7 +3139,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                               isL ? "text-slate-700" : "text-zinc-350"
                             }`}>
                               <td className="py-3 px-4 text-zinc-400 font-bold">{dt || "Não Inf."}</td>
-                              <td className="py-3 px-3 uppercase text-purple-650 dark:text-purple-400 font-bold max-w-[160px] truncate">{acc || "Não Inf."}</td>
+                              <td className="py-3 px-3 uppercase text-purple-600 dark:text-purple-400 font-bold max-w-[160px] truncate">{acc || "Não Inf."}</td>
                               <td className="py-3 px-3 italic truncate max-w-[320px]">{hist || "Lanço sem descrição"}</td>
                               <td className="py-3 px-3 uppercase truncate max-w-[200px] font-bold text-zinc-500">{cc || "Geral / Corporativo"}</td>
                               <td className="py-3 px-4 text-right text-amber-600 dark:text-amber-500 font-black">R$ {valueNum.toLocaleString("pt-BR")}</td>
@@ -1730,7 +3261,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
 
                       <button
                         onClick={handleBudgetRequest}
-                        className={`w-full py-2 px-4 rounded font-display font-black text-xs uppercase tracking-widest cursor-pointer transition flex items-center justify-center gap-1 bg-purple-650 hover:bg-purple-600 text-white`}
+                        className={`w-full py-2 px-4 rounded font-display font-black text-xs uppercase tracking-widest cursor-pointer transition flex items-center justify-center gap-1 bg-purple-600 hover:bg-purple-600 text-white`}
                       >
                         <Sliders className="w-4 h-4" /> Enviar Para Tatiane Rocha
                       </button>
@@ -1942,7 +3473,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                         className={`w-full py-2.5 px-4 rounded font-mono font-black text-xs uppercase cursor-pointer transition text-center border ${
                           simTransferCompleted
                             ? "bg-emerald-950/20 text-emerald-500 border-emerald-500/20 font-bold"
-                            : "bg-purple-650 hover:bg-purple-600 text-white border-transparent"
+                            : "bg-purple-600 hover:bg-purple-600 text-white border-transparent"
                         }`}
                       >
                         {simTransferCompleted ? "✓ Transferência Concluída" : "⚡ Executar Correção de Rumo"}
@@ -1961,7 +3492,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                           <div className={`p-12 text-center rounded-xl border ${
                             isL ? "bg-slate-50 border-slate-100" : "bg-black/15 border-zinc-900"
                           }`}>
-                            <LayoutGrid className="w-12 h-12 text-zinc-650 mx-auto opacity-30 mb-3 animate-pulse" />
+                            <LayoutGrid className="w-12 h-12 text-zinc-600 mx-auto opacity-30 mb-3 animate-pulse" />
                             <h4 className="font-bold text-zinc-500 uppercase tracking-widest text-xs">Aguardando Seleção de Entidades</h4>
                             <p className="text-[11px] text-zinc-500 max-w-xs mx-auto mt-1 leading-relaxed">
                               Selecione ambos os centros de custo no formulário ao lado para liberar as análises comparativas e taxas de execução em tempo real.
@@ -2037,7 +3568,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                                   <span>Simulador de Execução Previsto</span>
                                   <span>{Math.round(sourceRatioAfter * 100)}%</span>
                                 </span>
-                                <div className="w-full bg-zinc-805/50 rounded-full h-2 overflow-hidden">
+                                <div className="w-full bg-zinc-800/50 rounded-full h-2 overflow-hidden">
                                   <div 
                                     className={`h-full transition-all duration-300 ${
                                       sourceRatioAfter >= 0.95 
@@ -2100,7 +3631,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                                   <span>Simulador de Execução Previsto</span>
                                   <span>{Math.round(targetRatioAfter * 100)}%</span>
                                 </span>
-                                <div className="w-full bg-zinc-805/50 rounded-full h-2 overflow-hidden">
+                                <div className="w-full bg-zinc-800/50 rounded-full h-2 overflow-hidden">
                                   <div 
                                     className={`h-full transition-all duration-300 ${
                                       targetRatioAfter >= 0.95 
@@ -2228,7 +3759,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
             <div className={`p-4 border rounded-xl lg:col-span-1 transition-colors duration-200 ${
               isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 shadow-sm" : "bg-zinc-950/35 border-zinc-900 text-white"
             }`}>
-              <h4 className="font-display font-bold text-xs tracking-wide uppercase mb-3 flex items-center gap-1.5 text-purple-650 dark:text-purple-400">
+              <h4 className="font-display font-bold text-xs tracking-wide uppercase mb-3 flex items-center gap-1.5 text-purple-600 dark:text-purple-400">
                 <Sliders className="w-3.5 h-3.5" /> Solicitar Suplementação
               </h4>
               
@@ -2373,7 +3904,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
             <div className={`p-4 border rounded-xl ${
               isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 text-slate-800 shadow-xs" : "bg-zinc-950/20 border-zinc-900/60 text-slate-100"
             }`}>
-              <h4 className="font-display font-black text-xs tracking-wide uppercase mb-1 text-purple-650 dark:text-purple-400">
+              <h4 className="font-display font-black text-xs tracking-wide uppercase mb-1 text-purple-600 dark:text-purple-400">
                 <Play className="w-3.5 h-3.5 inline mr-1" /> Simular Despesa Caixa
               </h4>
               <p className="text-[11px] text-zinc-500 mb-3 font-mono leading-relaxed">
@@ -2424,7 +3955,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
                 <button
                   type="submit"
                   disabled={costCenters.length === 0}
-                  className="w-full py-1.5 bg-purple-700 disabled:opacity-50 text-white hover:bg-purple-650 font-black text-xs uppercase rounded transition cursor-pointer"
+                  className="w-full py-1.5 bg-purple-700 disabled:opacity-50 text-white hover:bg-purple-600 font-black text-xs uppercase rounded transition cursor-pointer"
                 >
                   Registrar Lançamento Simulador
                 </button>
@@ -2435,7 +3966,7 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
             <div className={`p-4 border rounded-xl ${
               isC ? "bg-black border-[#FFFF00]" : isL ? "bg-white border-slate-200 text-slate-800 shadow-xs" : "bg-zinc-950/20 border-zinc-900/60 text-slate-100"
             }`}>
-              <h4 className="font-display font-black text-xs tracking-wide uppercase mb-3 flex items-center gap-1 text-purple-650 dark:text-purple-400">
+              <h4 className="font-display font-black text-xs tracking-wide uppercase mb-3 flex items-center gap-1 text-purple-600 dark:text-purple-400">
                 <Sliders className="w-3.5 h-3.5" /> Suplementações Solicitadas
               </h4>
               

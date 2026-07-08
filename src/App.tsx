@@ -14,29 +14,16 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { BudgetDashboard } from "./components/BudgetDashboard";
+import { MaintenanceDashboard } from "./components/MaintenanceDashboard";
 import CalendarModule from "./components/CalendarModule";
 import { exportOSToPDF, exportInvoiceToPDF } from "./utils/pdfGenerator";
+import { generate448MaintenanceTickets } from "./utils/maintenanceSeeder";
+import { MaintenanceTicket } from "./types";
 import { HTMLPresentationView, HTMLCustomReportView } from "./components/HTMLPresentationView";
 import { 
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, 
   Tooltip, Legend, LineChart, Line, AreaChart, Area, PieChart, Pie, Cell 
 } from "recharts";
-
-// Interfaces for our custom systems
-interface MaintenanceTicket {
-  id: string;
-  equipment: string;
-  area: string;
-  priority: "Alta" | "Média" | "Baixa";
-  requester: string;
-  date: string;
-  description: string;
-  status: "Pendente" | "Em Execução" | "Concluído";
-  cost: number;
-  unit?: "SESI" | "SENAI";
-  product?: "Saúde" | "Segurança do Trabalho" | "Educação Básica" | "Educação Profissional";
-  syncStatus?: "Sincronizado" | "Pendente";
-}
 
 interface CostCenter {
   id: string;
@@ -144,6 +131,34 @@ export function FirjanSenaiLogo({ className = "h-12" }: { className?: string }) 
     </div>
   );
 }
+
+const safeLocalStorageFallback: Record<string, string> = {};
+const localStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return window.localStorage.getItem(key);
+    } catch (e) {
+      console.warn("Storage read blocked, using fallback", e);
+      return safeLocalStorageFallback[key] || null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn("Storage write blocked, using fallback", e);
+      safeLocalStorageFallback[key] = value;
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      window.localStorage.removeItem(key);
+    } catch (e) {
+      console.warn("Storage delete blocked, using fallback", e);
+      delete safeLocalStorageFallback[key];
+    }
+  }
+};
 
 export default function App() {
   // Global States
@@ -415,28 +430,32 @@ export default function App() {
       const saved = localStorage.getItem("onehub_maintenanceTickets");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed
-            .filter((o: any) => o !== null && typeof o === 'object')
-            .map((o: any) => ({
-              id: o.id || "",
-              equipment: o.equipment || "",
-              area: o.area || "",
-              priority: o.priority || "Média",
-              requester: o.requester || "Solicitante",
-              date: o.date || "",
-              description: o.description || "",
-              status: o.status || "Pendente",
-              cost: typeof o.cost === 'number' ? o.cost : 0,
-              unit: o.unit || "SESI",
-              product: o.product || "Saúde"
-            }));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter((r: any) => r !== null && typeof r === 'object');
         }
       }
     } catch {}
-    return [];
+    const seeded = generate448MaintenanceTickets();
+    const inProgressAndPending: MaintenanceTicket[] = [
+      { id: "OS-26-449", equipment: "Torno CNC Automático ABB", area: "Educação Profissional", priority: "Alta", requester: "Thais Nicolau", date: "2026-06-12", description: "Vibração anormal no eixo Z e erro de barramento lógico.", status: "Em Execução", cost: 4800, unit: "SENAI", product: "Manutenção Predial" as any, executor: "Alexandre", classification: "Elétrica" },
+      { id: "OS-26-450", equipment: "Subestação de Energia Trifásica", area: "Administração", priority: "Alta", requester: "Thais Nicolau", date: "2026-06-15", description: "Flutuação severa de tensão no disjuntor principal de proteção.", status: "Em Execução", cost: 11200, unit: "SESI", product: "Manutenção Predial" as any, executor: "João", classification: "Elétrica" },
+      { id: "OS-26-451", equipment: "Central de Condicionamento de Ar Chiller", area: "Saúde", priority: "Alta", requester: "Rodrigo Fonseca", date: "2026-06-20", description: "Substituição do contator elétrico e higienização dos dutos.", status: "Pendente", cost: 4100, unit: "SESI", product: "Manutenção Predial" as any, executor: "Welder", classification: "Ar-condicionado" },
+      { id: "OS-26-452", equipment: "Reparo no encanamento principal", area: "Educação Básica", priority: "Média", requester: "Eng. Sérgio", date: "2026-06-25", description: "Substituição de válvulas de descarga e reparo de infiltração.", status: "Pendente", cost: 1500, unit: "SESI", product: "Manutenção Predial" as any, executor: "RPCI", classification: "Hidráulica" },
+      { id: "OS-26-453", equipment: "Pintura da fachada frontal", area: "Administração", priority: "Média", requester: "Thais Nicolau", date: "2026-07-02", description: "Aplicação de pintura acrílica fosca nas paredes externas.", status: "Em Execução", cost: 7500, unit: "SESI", product: "Manutenção Predial" as any, executor: "Alexandre e Welder", classification: "Pintura" }
+    ];
+    return [...seeded, ...inProgressAndPending];
   });
-  const [newOS, setNewOS] = useState({ equipment: "", area: "", priority: "Alta" as "Alta"|"Média"|"Baixa", description: "", cost: 500 });
+  const [newOS, setNewOS] = useState({
+    equipment: "",
+    area: "",
+    priority: "Alta" as "Alta"|"Média"|"Baixa",
+    description: "",
+    cost: 500,
+    unit: "SESI",
+    classification: "Elétrica",
+    executor: "Alexandre"
+  });
+  const [showAddOSModal, setShowAddOSModal] = useState(false);
   const [osSearch, setOsSearch] = useState("");
   const [osStatusFilter, setOsStatusFilter] = useState("Todas");
   const [osPriorityFilter, setOsPriorityFilter] = useState("Todas");
@@ -445,6 +464,7 @@ export default function App() {
   const [osExecutorFilter, setOsExecutorFilter] = useState("Todos");
   const [osSortOrder, setOsSortOrder] = useState<"asc" | "desc" | null>(null);
   const [selectedOSForModal, setSelectedOSForModal] = useState<any | null>(null);
+  const [editingOS, setEditingOS] = useState<any | null>(null);
   const [osPage, setOsPage] = useState(1);
   const [osPageSize, setOsPageSize] = useState(6);
   const [showNewOSForm, setShowNewOSForm] = useState(false);
@@ -456,19 +476,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed
-            .filter((cc: any) => cc !== null && typeof cc === 'object')
-            .map((cc: any) => ({
-              id: cc.id || "",
-              name: cc.name || "",
-              owner: cc.owner || "Marília Moreira de Melo Brito",
-              budgetLimit: typeof cc.budgetLimit === 'number' ? cc.budgetLimit : 0,
-              allocated: typeof cc.allocated === 'number' ? cc.allocated : 0,
-              spent: typeof cc.spent === 'number' ? cc.spent : 0,
-              status: cc.status || "Excelente",
-              unit: cc.unit || "SESI",
-              product: cc.product || "Educação Básica"
-            }));
+          return parsed.filter((r: any) => r !== null && typeof r === 'object');
         }
       }
     } catch {}
@@ -480,24 +488,11 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed
-            .filter((r: any) => r !== null && typeof r === 'object')
-            .map((r: any) => ({
-              id: r.id || `REQ-${Math.floor(304 + Math.random() * 900)}`,
-              costCenterId: r.costCenterId || r.targetCCId || "",
-              costCenterName: r.costCenterName || "",
-              amount: typeof r.amount === 'number' ? r.amount : (typeof r.requestedAmount === 'number' ? r.requestedAmount : 0),
-              reason: r.reason || "",
-              requester: r.requester || "Solicitante",
-              status: r.status === "Aprovado" || r.status === "Recusado" || r.status === "Rejeitado" || r.status === "Reprovado" || r.status === "Pendente" ? (r.status === "Rejeitado" || r.status === "Reprovado" ? "Recusado" : r.status) : "Pendente",
-              date: r.date || new Date().toISOString().split("T")[0]
-            }));
+          return parsed.filter((r: any) => r !== null && typeof r === 'object');
         }
       }
-      return [];
-    } catch {
-      return [];
-    }
+    } catch {}
+    return [];
   });
 
   const [budgetAlertLogs, setBudgetAlertLogs] = useState<BudgetEmailAlert[]>(() => {
@@ -506,20 +501,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed
-            .filter((a: any) => a !== null && typeof a === 'object')
-            .map((a: any) => ({
-              id: a.id || "",
-              costCenterId: a.costCenterId || "",
-              costCenterName: a.costCenterName || "",
-              percentage: typeof a.percentage === 'number' ? a.percentage : 0,
-              recipient: a.recipient || "",
-              subject: a.subject || "",
-              sentAt: a.sentAt || "",
-              status: a.status || "Pendente",
-              limitType: a.limitType || "Aviso de 95%",
-              details: a.details || ""
-            }));
+          return parsed.filter((r: any) => r !== null && typeof r === 'object');
         }
       }
     } catch {}
@@ -542,19 +524,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed
-            .filter((inv: any) => inv !== null && typeof inv === 'object')
-            .map((inv: any) => ({
-              id: inv.id || "",
-              client: inv.client || "",
-              serviceType: inv.serviceType || "",
-              value: typeof inv.value === 'number' ? inv.value : 0,
-              issueDate: inv.issueDate || "",
-              dueDate: inv.dueDate || "",
-              status: inv.status || "Pendente",
-              unit: inv.unit || "SESI",
-              product: inv.product || "Saúde"
-            }));
+          return parsed.filter((r: any) => r !== null && typeof r === 'object');
         }
       }
     } catch {}
@@ -569,6 +539,16 @@ export default function App() {
   const [billingDrillDown, setBillingDrillDown] = useState<"none" | "SESI" | "SENAI">("none");
   const [compareFileAId, setCompareFileAId] = useState<string>("");
   const [compareFileBId, setCompareFileBId] = useState<string>("");
+
+  // Sub tab navigation inside the Maintenance sub-app (Thais)
+  const [maintenanceSubTab, setMaintenanceSubTab] = useState<"demandas" | "analise" | "dashboard" | "visualizacao" | "dados">("demandas");
+
+  // Selection state for multi-file synchronization (Marília and Cris)
+  const [selectedFilesForSync, setSelectedFilesForSync] = useState<Record<string, string[]>>({
+    manutencao: [],
+    orcamento: [],
+    faturamento: []
+  });
 
   // Sync index.css theme dark class
   useEffect(() => {
@@ -625,7 +605,15 @@ export default function App() {
         const normCand = cand.toLowerCase().replace(/_/g, " ").replace(/\s+/g, " ").trim();
         return normKey === normCand || normKey.includes(normCand) || normCand.includes(normKey);
       });
-      if (match !== undefined) return row[match];
+      if (match !== undefined) {
+        const val = row[match];
+        if (val === null || val === undefined) return undefined;
+        const str = String(val).trim();
+        if (str === "" || str.toLowerCase() === "undefined" || str.toLowerCase() === "null") {
+          return undefined;
+        }
+        return val;
+      }
     }
     return undefined;
   };
@@ -655,7 +643,7 @@ export default function App() {
 
   const [razaoSearch, setRazaoSearch] = useState<string>("");
 
-  const loadExecutiveSampleData = () => {
+  const loadExecutiveSampleData = (silent = false) => {
     const sampleDetails = [
       { "Organização": "SESI", "Conta N0": "PESSOAL", "Descricao Centro de Custo": "PRODUÇÃO EDUCACIONAL", "Descricao Conta N6": "SALÁRIOS E ENCARGOS", "Origem": "PLANEJADO", "Total": 245000 },
       { "Organização": "SESI", "Conta N0": "PESSOAL", "Descricao Centro de Custo": "PRODUÇÃO EDUCACIONAL", "Descricao Conta N6": "SALÁRIOS E ENCARGOS", "Origem": "REALIZADO", "Total": 235000 },
@@ -725,16 +713,15 @@ export default function App() {
 
     setCostCenters(parsedCCs);
 
-    const sampleMaintenanceTickets: MaintenanceTicket[] = [
-      { id: "OS-211", equipment: "Torno CNC Automático ABB", area: "Oficina Mecânica Avançada", priority: "Alta", requester: "Thais Nicolau", date: "2026-06-12", description: "Vibração anormal no eixo Z e erro de barramento lógico.", status: "Em Execução", cost: 4800, unit: "SENAI", product: "Manutenção Predial" as any },
-      { id: "OS-212", equipment: "Subestação de Energia Trifásica", area: "Cabine Primária SESI", priority: "Alta", requester: "Thais Nicolau", date: "2026-05-18", description: "Flutuação severa de tensão no disjuntor principal de proteção.", status: "Concluído", cost: 11200, unit: "SESI", product: "Manutenção Predial" as any },
-      { id: "OS-213", equipment: "Compressor de Ar Industrial metalúrgico", area: "Central de Ar Bloco B", priority: "Média", requester: "Carlos Souza", date: "2026-06-08", description: "Substituição preventiva do óleo lubrificante e das juntas de vedação.", status: "Concluído", cost: 1200, unit: "SENAI", product: "Manutenção Predial" as any },
-      { id: "OS-214", equipment: "Elevador de Carga Predial", area: "Almoxarifado Geral", priority: "Alta", requester: "Mariana Montenegro", date: "2026-06-19", description: "Contatos de segurança da porta travados, impedindo partida lógica.", status: "Pendente", cost: 3500, unit: "SESI", product: "Manutenção Predial" as any },
-      { id: "OS-215", equipment: "Injetora de Alta Pressão Plástica Romi", area: "Laboratório de Polímeros", priority: "Baixa", requester: "Tutor Julio Cesar", date: "2026-04-10", description: "Ajuste fino no sensor de fechamento hidráulico da prensa moldadora.", status: "Concluído", cost: 9200, unit: "SENAI", product: "Manutenção Predial" as any },
-      { id: "OS-216", equipment: "Central de Condicionamento de Ar Chiller", area: "Auditório SESI Centro", priority: "Média", requester: "Rodrigo Fonseca", date: "2026-03-15", description: "Substituição do contator elétrico e higienização dos dutos.", status: "Concluído", cost: 4100, unit: "SESI", product: "Manutenção Predial" as any },
-      { id: "OS-217", equipment: "Gerador a Diesel de Emergência STEMAC", area: "Área Técnica SESI", priority: "Alta", requester: "Thais Nicolau", date: "2026-02-18", description: "Bateria de partida descarregada, falha no teste semanal automático.", status: "Concluído", cost: 8400, unit: "SESI", product: "Manutenção Predial" as any },
-      { id: "OS-218", equipment: "Bomba Hidráulica de Recalque", area: "Subsolo Bloco A", priority: "Baixa", requester: "Eng. Sérgio", date: "2026-01-14", description: "Ruído no rolamento e vazamento sutil no selo mecânico.", status: "Concluído", cost: 2300, unit: "SENAI", product: "Manutenção Predial" as any }
+    const seeded = generate448MaintenanceTickets();
+    const inProgressAndPending: MaintenanceTicket[] = [
+      { id: "OS-26-449", equipment: "Torno CNC Automático ABB", area: "Educação Profissional", priority: "Alta", requester: "Thais Nicolau", date: "2026-06-12", description: "Vibração anormal no eixo Z e erro de barramento lógico.", status: "Em Execução", cost: 4800, unit: "SENAI", product: "Manutenção Predial" as any, executor: "Alexandre", classification: "Elétrica" },
+      { id: "OS-26-450", equipment: "Subestação de Energia Trifásica", area: "Administração", priority: "Alta", requester: "Thais Nicolau", date: "2026-06-15", description: "Flutuação severa de tensão no disjuntor principal de proteção.", status: "Em Execução", cost: 11200, unit: "SESI", product: "Manutenção Predial" as any, executor: "João", classification: "Elétrica" },
+      { id: "OS-26-451", equipment: "Central de Condicionamento de Ar Chiller", area: "Saúde", priority: "Alta", requester: "Rodrigo Fonseca", date: "2026-06-20", description: "Substituição do contator elétrico e higienização dos dutos.", status: "Pendente", cost: 4100, unit: "SESI", product: "Manutenção Predial" as any, executor: "Welder", classification: "Ar-condicionado" },
+      { id: "OS-26-452", equipment: "Reparo no encanamento principal", area: "Educação Básica", priority: "Média", requester: "Eng. Sérgio", date: "2026-06-25", description: "Substituição de válvulas de descarga e reparo de infiltração.", status: "Pendente", cost: 1500, unit: "SESI", product: "Manutenção Predial" as any, executor: "RPCI", classification: "Hidráulica" },
+      { id: "OS-26-453", equipment: "Pintura da fachada frontal", area: "Administração", priority: "Média", requester: "Thais Nicolau", date: "2026-07-02", description: "Aplicação de pintura acrílica fosca nas paredes externas.", status: "Em Execução", cost: 7500, unit: "SESI", product: "Manutenção Predial" as any, executor: "Alexandre e Welder", classification: "Pintura" }
     ];
+    const sampleMaintenanceTickets: MaintenanceTicket[] = [...seeded, ...inProgressAndPending];
 
     const sampleBillingInvoices: BillingInvoice[] = [
       { id: "FAT-301", client: "Metalúrgica Rio Sul S/A", serviceType: "Treinamento In-Company NR12", value: 140000, issueDate: "2026-06-02", dueDate: "2026-06-25", status: "Pago", unit: "SENAI", product: "Educação Profissional" },
@@ -757,8 +744,18 @@ export default function App() {
     setBillingInvoices(sampleBillingInvoices);
     setBudgetRequests(sampleBudgetRequests);
 
-    addToast("Amostra Carregada", "Amostra corporativa unificada de SESI/SENAI carregada! Todos os gráficos de todos os meses foram povoados com sucesso.", "success");
+    if (!silent) {
+      addToast("Amostra Carregada", "Amostra corporativa unificada de SESI/SENAI carregada! Todos os gráficos de todos os meses foram povoados com sucesso.", "success");
+    }
   };
+
+  // Auto-populate with corporate sample data on very first load
+  useEffect(() => {
+    const saved = localStorage.getItem("onehub_rawDetalhes");
+    if (!saved || saved === "[]") {
+      loadExecutiveSampleData(true);
+    }
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("onehub_maintenanceTickets", JSON.stringify(maintenanceTickets));
@@ -1081,19 +1078,45 @@ export default function App() {
           const finalCost = isNaN(rawCost) ? 450 : rawCost;
 
           const matchUnit = String(row[areaKey] || "").toUpperCase().includes("SENAI") ? "SENAI" : "SESI";
+          const rawId = idKey && row[idKey] !== undefined ? String(row[idKey]).trim() : "";
+          const finalId = (rawId && rawId.toLowerCase() !== "undefined") ? rawId : `OS-26-${Math.floor(500 + Math.random() * 500)}-${index}`;
+          
+          const rawEquip = equipKey && row[equipKey] !== undefined ? String(row[equipKey]).trim() : "";
+          const finalEquip = (rawEquip && rawEquip.toLowerCase() !== "undefined") ? rawEquip : "Chamado Geral de Reparo";
+
+          const rawArea = areaKey && row[areaKey] !== undefined ? String(row[areaKey]).trim() : "";
+          const finalArea = (rawArea && rawArea.toLowerCase() !== "undefined") ? rawArea : "Administração";
+
+          const rawDesc = descKey && row[descKey] !== undefined ? String(row[descKey]).trim() : "";
+          const finalDesc = (rawDesc && rawDesc.toLowerCase() !== "undefined") ? rawDesc : "Inspeção e manutenção corretiva de rotina.";
+
+          const rawDate = row["Data"] || row["data"] || row["Abertura"] || row["Date"] || new Date().toISOString().split("T")[0];
+          const finalDate = String(rawDate).toLowerCase() !== "undefined" ? String(rawDate) : new Date().toISOString().split("T")[0];
+
+          const rawClass = row["Classificação"] || row["classificacao"] || row["Categoria"] || "Outros";
+          const finalClass = String(rawClass).toLowerCase() !== "undefined" ? String(rawClass) : "Outros";
+
+          const rawExec = executorVal || row["Executor"] || row["executor"] || "Alexandre";
+          const finalExec = String(rawExec).toLowerCase() !== "undefined" ? String(rawExec) : "Alexandre";
+
+          const rawConclusionDate = row["Data Conclusão"] || row["data conclusao"] || row["Conclusão"] || row["Conclusion Date"] || finalDate;
+          const finalConclusionDate = rowStatus === "Concluído" ? (String(rawConclusionDate).toLowerCase() !== "undefined" ? String(rawConclusionDate) : finalDate) : "";
 
           newTickets.push({
-            id: idKey ? String(row[idKey]) : `OS-${Math.floor(200 + Math.random() * 800)}-${index}`,
-            equipment: String(row[equipKey]),
-            area: String(row[areaKey]),
+            id: finalId,
+            equipment: finalEquip,
+            area: finalArea,
             priority: rowPriority,
-            requester: currentUser?.name || "Importador PMO",
-            date: new Date().toISOString().split("T")[0],
-            description: executorVal ? `Atribuído a: ${executorVal}. ${String(row[descKey] || "")}` : String(row[descKey]),
+            requester: finalExec,
+            date: finalDate,
+            description: finalDesc,
             status: rowStatus,
             cost: finalCost,
             unit: matchUnit,
-            product: "Manutenção Predial" as any
+            product: "Manutenção Predial" as any,
+            executor: finalExec,
+            classification: finalClass,
+            conclusionDate: finalConclusionDate
           });
         });
 
@@ -1401,27 +1424,134 @@ export default function App() {
     }
   };
 
+  // Synchronize and analyze multiple files in a single batch (Marília and Cris)
+  const handleAnalyzeMultipleFiles = async (service: "manutencao" | "orcamento" | "faturamento") => {
+    const selectedIds = selectedFilesForSync[service] || [];
+    if (selectedIds.length < 2) {
+      addToast("Atenção", "Por favor, marque pelo menos duas planilhas para realizar a sincronização e análise conjunta.", "warning");
+      return;
+    }
+
+    const filesToSync = uploadedFiles.filter(f => selectedIds.includes(f.id));
+    if (filesToSync.length === 0) return;
+
+    // 1. Instantly parse and integrate all of them into the system's state
+    filesToSync.forEach(fileObj => {
+      parseAndIntegrateFileData(fileObj.name, fileObj.content || "", service);
+    });
+
+    addToast("Sincronização Ativada", `${filesToSync.length} planilha(s) sincronizada(s) e mescladas no banco de dados local!`, "success");
+
+    // 2. Perform a joint/combined AI analysis on all of them
+    setIsAnalyzingFile(true);
+    setFileAnalysisError("");
+
+    try {
+      // Create a consolidated content of all files for the LLM
+      let combinedText = `### RELATÓRIO DE SINCRONIZAÇÃO EM LOTE - SERVIÇO: ${service.toUpperCase()}\n`;
+      combinedText += `Total de Planilhas Combinadas: ${filesToSync.length}\n\n`;
+
+      for (let i = 0; i < filesToSync.length; i++) {
+        const fileObj = filesToSync[i];
+        combinedText += `--- ARQUIVO ${i + 1}: ${fileObj.name} (Tamanho: ${fileObj.size}) ---\n`;
+        
+        let decodedContent = "";
+        try {
+          if (fileObj.content) {
+            decodedContent = atob(fileObj.content);
+          }
+        } catch (e) {
+          decodedContent = "[Formato binário ou codificado em Base64]";
+        }
+
+        combinedText += decodedContent.substring(0, 15000) + (decodedContent.length > 15000 ? "\n... [CONTEÚDO TRUNCADO POR LIMITE DE CARACTERES] ..." : "") + "\n\n";
+      }
+
+      const syntheticFileName = `Sincronizacao_Multi_Planilhas_${service}.txt`;
+      // Safely encode to base64
+      const base64Payload = btoa(unescape(encodeURIComponent(combinedText)));
+
+      const response = await fetch("/api/ai/analyze-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: syntheticFileName,
+          fileSize: (combinedText.length / 1024).toFixed(1) + " KB",
+          mimeType: "text/plain",
+          fileData: base64Payload,
+          userPrompt: `Realize uma análise consolidada e comparativa entre as ${filesToSync.length} planilhas sincronizadas. Identifique padrões cruzados, inconsistências, conciliações operacionais e proponha recomendações corporativas robustas.`,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Resposta da rede não foi bem-sucedida");
+      }
+
+      const data = await response.json();
+      const reportText = data.text || "Análise conjunta concluída com sucesso.";
+
+      // Update first file's report or save a virtual synced file
+      const syntheticFileId = "synced-" + Date.now();
+      const virtualSyncedFile = {
+        id: syntheticFileId,
+        name: `Sincronização Unificada (${filesToSync.length} arquivos)`,
+        size: (combinedText.length / 1024).toFixed(1) + " KB",
+        type: "text/plain",
+        uploadedAt: new Date().toISOString().split("T")[0],
+        status: "sucesso" as const,
+        service: service,
+        content: base64Payload,
+        analysisReport: reportText
+      };
+
+      setUploadedFiles(prev => [virtualSyncedFile, ...prev]);
+      setSelectedFileForAnalysis(virtualSyncedFile);
+
+      addToast("Análise Conjunta Pronta", `A análise corporativa integrada de ${filesToSync.length} planilhas foi concluída com sucesso pelo Gemini!`, "success");
+    } catch (error: any) {
+      console.error("Failed joint analysis:", error);
+      setFileAnalysisError("Não foi possível processar a IA conjunta: " + error.message);
+      addToast("Erro na Análise Multi", "Falha técnica ao cruzar dados via Gemini.", "warning");
+    } finally {
+      setIsAnalyzingFile(false);
+    }
+  };
+
   // HANDLERS FOR MANUTENÇÃO (Thais)
   const handleCreateOS = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newOS.equipment || !newOS.area || !newOS.description) return;
 
     const newTicket: MaintenanceTicket = {
-      id: `OS-${Math.floor(107 + Math.random() * 900)}`,
+      id: `OS-26-${Math.floor(454 + Math.random() * 500)}`,
       equipment: newOS.equipment,
       area: newOS.area,
       priority: newOS.priority,
-      requester: currentUser?.name || "Solicitante",
+      requester: newOS.executor || currentUser?.name || "Solicitante",
       date: new Date().toISOString().split("T")[0],
       description: newOS.description,
       status: "Pendente",
       cost: Number(newOS.cost) || 0,
-      syncStatus: isOnline ? "Sincronizado" : "Pendente"
+      syncStatus: isOnline ? "Sincronizado" : "Pendente",
+      unit: newOS.unit,
+      classification: newOS.classification,
+      executor: newOS.executor,
+      conclusionDate: ""
     };
 
     setMaintenanceTickets(prev => [newTicket, ...prev]);
-    setNewOS({ equipment: "", area: "", priority: "Alta", description: "", cost: 500 });
+    setNewOS({
+      equipment: "",
+      area: "",
+      priority: "Alta",
+      description: "",
+      cost: 500,
+      unit: "SESI",
+      classification: "Elétrica",
+      executor: "Alexandre"
+    });
     setShowNewOSForm(false);
+    setShowAddOSModal(false);
 
     // If offline, queue the sync
     if (!isOnline) {
@@ -1471,6 +1601,21 @@ export default function App() {
       }
     }
     setMaintenanceTickets(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
+  };
+
+  const handleSaveEditedOS = (edited: any) => {
+    if (!edited || !edited.id) return;
+    setMaintenanceTickets(prev => prev.map(t => t.id === edited.id ? edited : t));
+    setSelectedOSForModal(edited);
+    setEditingOS(null);
+    addToast("OS Editada", `A ordem de serviço ${edited.id} foi atualizada com sucesso!`, "success");
+  };
+
+  const handleDeleteOS = (id: string) => {
+    setMaintenanceTickets(prev => prev.filter(t => t.id !== id));
+    setSelectedOSForModal(null);
+    setEditingOS(null);
+    addToast("OS Excluída 🗑️", `A ordem de serviço ${id} foi removida definitivamente do banco local!`, "success");
   };
 
   // HANDLERS FOR ORÇAMENTO (Marília)
@@ -2289,10 +2434,31 @@ export default function App() {
 
             {/* Uploaded Repository Selector */}
             <div className="space-y-2">
-              <label className="text-[10px] font-mono uppercase tracking-wider block">Selecione o arquivo para auditoria atual:</label>
-              <div className="max-h-[140px] overflow-y-auto space-y-1 pr-1">
+              <label className="text-[10px] font-mono uppercase tracking-wider block">
+                Selecione para auditar ou marque múltiplos para sincronizar em lote:
+              </label>
+              <div className="max-h-[160px] overflow-y-auto space-y-1.5 pr-1">
                 {filteredUploadedFiles.map((file) => {
                   const isSelected = selectedFileForAnalysis?.id === file.id;
+                  const isCheckedForSync = selectedFilesForSync[dataType]?.includes(file.id) || false;
+
+                  const handleCheckboxToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+                    e.stopPropagation();
+                    const currentSelected = selectedFilesForSync[dataType] || [];
+                    let nextSelected = [...currentSelected];
+                    if (e.target.checked) {
+                      if (!nextSelected.includes(file.id)) {
+                        nextSelected.push(file.id);
+                      }
+                    } else {
+                      nextSelected = nextSelected.filter(id => id !== file.id);
+                    }
+                    setSelectedFilesForSync(prev => ({
+                      ...prev,
+                      [dataType]: nextSelected
+                    }));
+                  };
+
                   return (
                     <div 
                       key={file.id}
@@ -2308,8 +2474,16 @@ export default function App() {
                       }`}
                     >
                       <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={isCheckedForSync}
+                          onChange={handleCheckboxToggle}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mr-1 rounded border-zinc-700 text-purple-600 focus:ring-purple-500 h-3.5 w-3.5 cursor-pointer accent-purple-600"
+                          title="Selecionar para Sincronização em Lote"
+                        />
                         <FileSpreadsheet className={`w-4 h-4 shrink-0 ${isSelected ? config.accentClass : "text-zinc-500"}`} />
-                        <span className="font-bold truncate max-w-[200px]" title={file.name}>{file.name}</span>
+                        <span className="font-bold truncate max-w-[170px]" title={file.name}>{file.name}</span>
                         <span className="text-[9px] font-mono opacity-60">({file.size})</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
@@ -2325,6 +2499,10 @@ export default function App() {
                             e.stopPropagation();
                             setUploadedFiles(prev => prev.filter(f => f.id !== file.id));
                             if (isSelected) setSelectedFileForAnalysis(null);
+                            setSelectedFilesForSync(prev => ({
+                              ...prev,
+                              [dataType]: (prev[dataType] || []).filter(id => id !== file.id)
+                            }));
                           }}
                           className="hover:scale-110 p-1 text-red-500 cursor-pointer border-0 bg-transparent"
                         >
@@ -2340,6 +2518,36 @@ export default function App() {
                   </div>
                 )}
               </div>
+
+              {/* Multi-file batch sync trigger bar */}
+              {(selectedFilesForSync[dataType]?.length || 0) >= 2 && (
+                <div className={`p-2.5 rounded-xl flex flex-col md:flex-row items-center justify-between gap-3 mt-3 border transition ${
+                  theme === "contrast"
+                    ? "bg-black border-[#FFFF00] text-[#FFFF00]"
+                    : theme === "light"
+                      ? "bg-emerald-500/5 border-emerald-200 text-emerald-800"
+                      : "bg-[#0a1a10] border-emerald-500/20 text-emerald-400"
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <span className="animate-ping rounded-full h-2 w-2 bg-emerald-500 block shrink-0" />
+                    <div>
+                      <p className="text-[10.5px] font-mono uppercase font-black">Modo Lote Sincronizado</p>
+                      <p className="text-[9px] opacity-80 font-mono font-bold leading-tight">
+                        {selectedFilesForSync[dataType].length} arquivos serão analisados juntos pelo Gemini
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isAnalyzingFile}
+                    onClick={() => handleAnalyzeMultipleFiles(dataType as any)}
+                    className="w-full md:w-auto px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-[10px] font-black uppercase transition flex items-center justify-center gap-1 cursor-pointer tracking-wider shrink-0"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isAnalyzingFile ? "animate-spin" : ""}`} />
+                    Sincronizar & Analisar juntos
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2436,7 +2644,7 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <p className="text-[11px] leading-relaxed text-slate-650 dark:text-zinc-300 font-mono whitespace-pre-wrap">
+                <p className="text-[11px] leading-relaxed text-slate-600 dark:text-zinc-300 font-mono whitespace-pre-wrap">
                   {selectedFileForAnalysis.analysisReport}
                 </p>
               </div>
@@ -3449,7 +3657,7 @@ export default function App() {
                   className={`w-full text-center text-xs font-semibold rounded-xl py-3.5 px-4 font-mono tracking-[0.25em] transition-all duration-150 uppercase border ${
                     theme === "dark" 
                       ? "bg-[#050407] border-purple-950/45 text-[#00E676] placeholder:text-[#3B3A4A] placeholder:font-sans placeholder:tracking-[0.10em] focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20" 
-                      : "bg-white border-slate-200 text-blue-650 placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20"
+                      : "bg-white border-slate-200 text-blue-600 placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/20"
                   }`}
                   id="token-login-input"
                 />
@@ -3474,7 +3682,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className={`text-[11px] font-medium font-sans mt-5 border p-2.5 rounded-lg text-center ${
-                  theme === "dark" ? "bg-red-950/20 border-red-500/20 text-red-400" : "bg-red-50 border-red-150 text-red-650"
+                  theme === "dark" ? "bg-red-950/20 border-red-500/20 text-red-400" : "bg-red-50 border-red-150 text-red-600"
                 }`}
               >
                 {tokenError}
@@ -3486,7 +3694,7 @@ export default function App() {
               theme === "dark" ? "border-purple-950/40" : "border-slate-150"
             }`}>
               <p className={`text-[9px] uppercase font-mono font-bold tracking-widest text-center mb-3 ${
-                theme === "dark" ? "text-purple-400" : "text-purple-650"
+                theme === "dark" ? "text-purple-400" : "text-purple-600"
               }`}>
                 Acesso Rápido para Testes (Clique para Preencher)
               </p>
@@ -3657,7 +3865,7 @@ export default function App() {
                 className={`text-[10px] uppercase font-bold tracking-wider font-mono border px-3.5 py-1 rounded-lg transition duration-150 flex items-center gap-1 cursor-pointer ${
                   theme === "dark"
                     ? "border-red-900/30 hover:border-red-500/35 text-red-400 hover:bg-red-950/20"
-                    : "border-red-200 hover:border-red-400 text-red-650 hover:bg-red-50 bg-white"
+                    : "border-red-200 hover:border-red-400 text-red-600 hover:bg-red-50 bg-white"
                 }`}
               >
                 <LogOut className="w-3 h-3 shrink-0" />
@@ -3778,7 +3986,7 @@ export default function App() {
                       }}
                       className={`px-3 py-1 text-[10px] h-7 uppercase font-mono font-bold rounded-md transition ${
                         globalUnidade === "TODAS"
-                          ? "bg-purple-650 text-white shadow-sm"
+                          ? "bg-purple-600 text-white shadow-sm"
                           : theme === "light"
                             ? "text-slate-500 hover:text-slate-800"
                             : "text-zinc-400 hover:text-white"
@@ -3810,7 +4018,7 @@ export default function App() {
                       }}
                       className={`px-3 py-1 text-[10px] h-7 uppercase font-mono font-bold rounded-md transition ${
                         globalUnidade === "SENAI"
-                          ? "bg-emerald-650 text-white shadow-sm"
+                          ? "bg-emerald-600 text-white shadow-sm"
                           : theme === "light"
                             ? "text-slate-500 hover:text-slate-800"
                             : "text-zinc-400 hover:text-white"
@@ -3931,7 +4139,7 @@ export default function App() {
                     }}
                     className={`self-end h-8 px-2.5 rounded-lg border text-xs transition flex items-center gap-1.5 cursor-pointer ${
                       theme === "light"
-                        ? "bg-slate-100 border-slate-205 text-slate-600 hover:bg-slate-200"
+                        ? "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"
                         : "bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-red-400"
                     }`}
                     title="Limpar Filtros"
@@ -4060,7 +4268,7 @@ export default function App() {
                         <h4 className={`text-[10px] uppercase font-mono font-bold tracking-wider ${theme === "dark" ? "text-zinc-400" : "text-slate-500"}`}>Arquivos no Repositório</h4>
                         {uploadedFiles.length === 0 ? (
                           <div className={`text-center p-6 border rounded-xl border-dashed ${
-                            theme === "dark" ? "border-zinc-900 bg-zinc-950/20 text-zinc-650" : "border-slate-200 bg-slate-50 text-slate-400"
+                            theme === "dark" ? "border-zinc-900 bg-zinc-950/20 text-zinc-600" : "border-slate-200 bg-slate-50 text-slate-400"
                           }`}>
                             <p className="text-xs font-mono">Repositório Vazio</p>
                           </div>
@@ -4213,7 +4421,7 @@ export default function App() {
                                   } else if (trimmed.startsWith("*") || trimmed.startsWith("-")) {
                                     return <li key={idx} className="ml-3 mt-1 list-none flex items-start gap-1.5">
                                       <span className="text-purple-400 mt-1 scale-120 shrink-0">•</span>
-                                      <span className={theme === "dark" ? "text-zinc-300" : "text-slate-650"}>{trimmed.replace(/^[*-\s]+/, "")}</span>
+                                      <span className={theme === "dark" ? "text-zinc-300" : "text-slate-600"}>{trimmed.replace(/^[*-\s]+/, "")}</span>
                                     </li>;
                                   } else if (trimmed.startsWith("1.") || trimmed.startsWith("2.") || trimmed.startsWith("3.") || trimmed.startsWith("4.")) {
                                     return <div key={idx} className={`mt-1 font-mono text-[11px] ml-4 border-l pl-2 leading-relaxed ${
@@ -4259,7 +4467,7 @@ export default function App() {
                                       className={`border hover:text-white text-[10px] font-mono px-2.5 py-1.5 rounded transition flex items-center gap-1.5 cursor-pointer ${
                                         theme === "dark"
                                           ? "bg-zinc-900 border-zinc-800 hover:bg-zinc-850 text-zinc-400"
-                                          : "bg-white border-slate-200 text-slate-650 hover:bg-slate-50 hover:text-slate-800"
+                                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-800"
                                       }`}
                                     >
                                       <FileCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -4421,7 +4629,7 @@ export default function App() {
                       </span>
                       <button 
                         onClick={() => setActiveSubApp("faturamento")}
-                        className="text-xs font-semibold text-amber-400 group-hover:underline flex items-center gap-1 font-mono hover:text-amber-305 transition"
+                        className="text-xs font-semibold text-amber-400 group-hover:underline flex items-center gap-1 font-mono hover:text-amber-300 transition"
                       >
                         Acessar App <ChevronRight className="w-3.5 h-3.5 shrink-0" />
                       </button>
@@ -4813,7 +5021,7 @@ export default function App() {
                               onClick={() => setBillingDrillDown("SESI")}
                               className={`px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider rounded-lg border transition-all cursor-pointer ${
                                 billingDrillDown === "SESI"
-                                  ? "text-white bg-purple-650/30 border-purple-500 font-extrabold"
+                                  ? "text-white bg-purple-600/30 border-purple-500 font-extrabold"
                                   : "text-zinc-450 hover:text-white bg-zinc-900 border-zinc-900"
                               }`}
                             >
@@ -4824,7 +5032,7 @@ export default function App() {
                               onClick={() => setBillingDrillDown("SENAI")}
                               className={`px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider rounded-lg border transition-all cursor-pointer ${
                                 billingDrillDown === "SENAI"
-                                  ? "text-white bg-emerald-650/30 border-[#00E676] font-extrabold"
+                                  ? "text-white bg-emerald-600/30 border-[#00E676] font-extrabold"
                                   : "text-zinc-450 hover:text-white bg-zinc-900 border-zinc-900"
                               }`}
                             >
@@ -4909,7 +5117,7 @@ export default function App() {
 
                           <div className="space-y-4">
                             <div className="p-3.5 bg-zinc-900 border border-zinc-800 rounded-xl space-y-2">
-                              <span className="text-[9px] font-mono uppercase bg-zinc-805 text-zinc-350 px-1.5 py-0.5 rounded font-bold">Resumo Financeiro</span>
+                              <span className="text-[9px] font-mono uppercase bg-zinc-800 text-zinc-350 px-1.5 py-0.5 rounded font-bold">Resumo Financeiro</span>
                               <div className="space-y-2 pt-1">
                                 <div className="flex items-center justify-between text-xs">
                                   <span className="text-zinc-400 font-medium font-sans flex items-center gap-1">
@@ -5531,13 +5739,13 @@ export default function App() {
                   <div className="space-y-1">
                     <span className="text-[10px] text-emerald-600 dark:text-[#00E676] uppercase font-bold tracking-widest font-mono">APP DEPTO: THAIS NICOLAU DA SILVA FERREIRA</span>
                     <h2 className={`text-2xl font-extrabold font-display tracking-tight uppercase flex items-center gap-2 ${
-                      theme === "light" ? "text-slate-905" : "text-white"
+                      theme === "light" ? "text-slate-900" : "text-white"
                     }`}>
                       <Wrench className="w-6 h-6 text-emerald-600 dark:text-[#00E676]" />
                       Acompanhamento de Manutenção Industrial
                     </h2>
                     <p className={`text-xs leading-relaxed max-w-xl ${
-                      theme === "light" ? "text-slate-505" : "text-slate-400"
+                      theme === "light" ? "text-slate-500" : "text-slate-400"
                     }`}>
                       Supervisão completa de ordens de serviço (OS) prediais, equipamentos, ferramentas CNC e monitoramento do SLA operacional de resoluções de pendências.
                     </p>
@@ -5572,733 +5780,56 @@ export default function App() {
  
                     {/* Action Trigger */}
                     <button
-                      onClick={() => setShowNewOSForm(!showNewOSForm)}
+                      type="button"
+                      onClick={() => setShowAddOSModal(true)}
                       className="py-2.5 px-4 bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs uppercase rounded-lg transition-all duration-150 flex items-center gap-2 font-mono shrink-0 shadow-[0_4px_10px_rgba(16,185,129,0.15)] cursor-pointer"
                     >
-                      {showNewOSForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                      {showNewOSForm ? "Fechar Formulário" : "Abrir Nova OS"}
+                      <Plus className="w-4 h-4" />
+                      Emitir Nova OS
                     </button>
                   </div>
                 </div>
- 
-                {/* KPIs Row */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                  <div className={`p-4 border rounded-xl transition-all ${
-                    theme === "contrast" 
-                      ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                      : theme === "dark" 
-                        ? "bg-zinc-950/35 border-zinc-900 text-slate-100" 
-                        : "bg-white border-slate-205 shadow-xs text-slate-800"
-                  }`}>
-                    <p className={`text-[10px] uppercase font-mono tracking-wider ${
-                      theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                    }`}>Ordens em Pendência</p>
-                    <h4 className={`text-xl font-bold font-mono mt-1 ${theme === "light" ? "text-slate-900" : "text-white"}`}>
-                      {maintenanceTickets.filter(o => o.status === "Pendente").length}
-                    </h4>
-                  </div>
-                  <div className={`p-4 border rounded-xl transition-all ${
-                    theme === "contrast" 
-                      ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                      : theme === "dark" 
-                        ? "bg-zinc-950/35 border-zinc-900 text-slate-100" 
-                        : "bg-white border-slate-205 shadow-xs text-slate-800"
-                  }`}>
-                    <p className={`text-[10px] uppercase font-mono tracking-wider ${
-                      theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                    }`}>Em Andamento</p>
-                    <h4 className="text-xl font-bold font-mono text-emerald-600 dark:text-[#00E676] mt-1">
-                      {maintenanceTickets.filter(o => o.status === "Em Execução").length}
-                    </h4>
-                  </div>
-                  <div className={`p-4 border rounded-xl transition-all ${
-                    theme === "contrast" 
-                      ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                      : theme === "dark" 
-                        ? "bg-zinc-950/35 border-zinc-900 text-slate-100" 
-                        : "bg-white border-slate-205 shadow-xs text-slate-800"
-                  }`}>
-                    <p className={`text-[10px] uppercase font-mono tracking-wider ${
-                      theme === "light" ? "text-slate-505 font-bold" : "text-zinc-400"
-                    }`}>Concluídas</p>
-                    <h4 className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 mt-1">
-                      {maintenanceTickets.filter(o => o.status === "Concluído").length}
-                    </h4>
-                  </div>
-                  <div className={`p-4 border rounded-xl transition-all ${
-                    theme === "contrast" 
-                      ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                      : theme === "dark" 
-                        ? "bg-zinc-950/35 border-zinc-900 text-slate-100" 
-                        : "bg-white border-slate-205 shadow-xs text-slate-800"
-                  }`}>
-                    <p className={`text-[10px] uppercase font-mono tracking-wider ${
-                      theme === "light" ? "text-slate-505 font-bold" : "text-zinc-400"
-                    }`}>Despesas Totais OS</p>
-                    <h4 className="text-xl font-bold font-mono text-purple-600 dark:text-purple-400 mt-1">
-                      R$ {calculatedStats.totalMaintenanceCost.toLocaleString("pt-BR")}
-                    </h4>
-                  </div>
+
+                {/* Tab selector for Maintenance (Thais) */}
+                <div className="flex border-b border-zinc-200 dark:border-zinc-800 pb-px gap-2 overflow-x-auto scrollbar-none">
+                  {[
+                    { id: "demandas", label: "📋 Demandas" },
+                    { id: "analise", label: "📊 Q1 Análise" },
+                    { id: "dashboard", label: "📈 Dashboard BI" },
+                    { id: "visualizacao", label: "👁️ Visualização" },
+                    { id: "dados", label: "🗄️ Dados_" }
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setMaintenanceSubTab(tab.id as any)}
+                      className={`py-2.5 px-4 text-xs font-bold transition rounded-t-lg border-b-2 cursor-pointer font-sans uppercase tracking-wider ${
+                        maintenanceSubTab === tab.id
+                          ? theme === "contrast"
+                            ? "border-[#FFFF00] text-[#FFFF00] bg-black"
+                            : "border-emerald-600 text-emerald-600 dark:text-[#00E676] bg-emerald-500/5 font-black"
+                          : "border-transparent text-slate-500 dark:text-zinc-500 hover:text-slate-800 dark:hover:text-slate-200"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
 
-                {/* Expendable Create OS Form */}
-                {showNewOSForm && (
-                  <motion.div 
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    className={`p-5 border rounded-xl space-y-4 transition-colors duration-200 ${
-                      theme === "contrast"
-                        ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                        : theme === "dark"
-                          ? "bg-zinc-950/40 border-purple-500/20 text-slate-100"
-                          : "bg-white border-slate-200 shadow-sm text-slate-805"
-                    }`}
-                  >
-                    <h3 className={`text-xs font-extrabold uppercase font-mono flex items-center gap-1.5 pb-2 border-b ${
-                      theme === "light" ? "border-slate-100 text-slate-900 font-bold" : "border-zinc-900 text-white"
-                    }`}>
-                      <Hammer className={`w-4 h-4 ${theme === "light" ? "text-emerald-600" : "text-[#00E676]"}`} />
-                      Instanciar Ordem de Serviço Corretiva / Emergencial
-                    </h3>
-                    
-                    <form onSubmit={handleCreateOS} className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      <div>
-                        <label className={`text-[9.5px] uppercase font-mono block mb-1 ${
-                          theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                        }`}>Equipamento Industrial</label>
-                        <input 
-                          type="text" 
-                          required
-                          placeholder="Ex: Compressor de Ar Wayne"
-                          value={newOS.equipment}
-                          onChange={(e) => setNewOS({ ...newOS, equipment: e.target.value })}
-                          className={`w-full border rounded px-2.5 py-1.5 text-xs outline-none transition ${
-                            theme === "light"
-                              ? "bg-slate-50 border-slate-200 text-slate-900 font-semibold focus:border-emerald-500"
-                              : "bg-[#050407] border-zinc-800 focus:border-emerald-500 text-white"
-                          }`}
-                        />
-                      </div>
-                      <div>
-                        <label className={`text-[9.5px] uppercase font-mono block mb-1 ${
-                          theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                        }`}>Unidade / Setor de Trabalho</label>
-                        <input 
-                          type="text" 
-                          required
-                          placeholder="Ex: Mecânica Maracanã"
-                          value={newOS.area}
-                          onChange={(e) => setNewOS({ ...newOS, area: e.target.value })}
-                          className={`w-full border rounded px-2.5 py-1.5 text-xs outline-none transition ${
-                            theme === "light"
-                              ? "bg-slate-50 border-slate-200 text-slate-900 font-semibold focus:border-emerald-500"
-                              : "bg-[#050407] border-zinc-800 focus:border-emerald-500 text-white"
-                          }`}
-                        />
-                      </div>
-                      <div>
-                        <label className={`text-[9.5px] uppercase font-mono block mb-1 ${
-                          theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                        }`}>Prioridade Geral</label>
-                        <select 
-                          value={newOS.priority}
-                          onChange={(e) => setNewOS({ ...newOS, priority: e.target.value as "Alta"|"Média"|"Baixa" })}
-                          className={`w-full border rounded p-1.5 text-xs outline-none transition cursor-pointer ${
-                            theme === "light"
-                              ? "bg-slate-50 border-slate-200 text-slate-900 font-bold focus:border-emerald-500"
-                              : "bg-[#050407] border-zinc-800 focus:border-emerald-500 text-white"
-                          }`}
-                        >
-                          <option value="Alta">Alta (Imediata)</option>
-                          <option value="Média">Média (Até 48h)</option>
-                          <option value="Baixa">Baixa (Preventiva)</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className={`text-[9.5px] uppercase font-mono block mb-1 ${
-                          theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                        }`}>Custo Estimado de Reparo (R$)</label>
-                        <input 
-                          type="number" 
-                          required
-                          placeholder="Ex: 1200"
-                          value={newOS.cost}
-                          onChange={(e) => setNewOS({ ...newOS, cost: Number(e.target.value) })}
-                          className={`w-full border rounded px-2.5 py-1.5 text-xs outline-none transition ${
-                            theme === "light"
-                              ? "bg-slate-50 border-slate-200 text-slate-900 font-semibold focus:border-emerald-500"
-                              : "bg-[#050407] border-zinc-800 focus:border-emerald-500 text-white"
-                          }`}
-                        />
-                      </div>
-                      <div className="md:col-span-3">
-                        <label className={`text-[9.5px] uppercase font-mono block mb-1 ${
-                          theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
-                        }`}>Detalhamento Técnico da Anomalia / Problema</label>
-                        <input 
-                          type="text" 
-                          required
-                          placeholder="Ex: Vibração intermitente e liberação anormal de detritos metálicos no cárter secundário de graxas."
-                          value={newOS.description}
-                          onChange={(e) => setNewOS({ ...newOS, description: e.target.value })}
-                          className={`w-full border rounded px-2.5 py-1.5 text-xs outline-none transition ${
-                            theme === "light"
-                              ? "bg-slate-50 border-slate-200 text-slate-900 font-semibold focus:border-emerald-500"
-                              : "bg-[#050407] border-zinc-800 focus:border-emerald-500 text-white"
-                          }`}
-                        />
-                      </div>
-                      <div className="flex items-end">
-                        <button
-                          type="submit"
-                          className="w-full py-1.5 bg-[#00E676] hover:bg-[#00C853] text-black font-extrabold text-xs uppercase rounded transition-all duration-150 font-display flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Send className="w-3.5 h-3.5" /> Emitir OS
-                        </button>
-                      </div>
-
-                      {/* File attachment upload specifically inside New OS Form */}
-                      <div className="md:col-span-4 mt-2">
-                        <div className={`p-4 rounded-xl border-2 border-dashed transition-all duration-200 text-center relative ${
-                          theme === "contrast"
-                            ? "border-[#FFFF00] bg-black text-[#FFFF00]"
-                            : "border-emerald-500/30 bg-emerald-950/5 hover:border-emerald-400"
-                        }`}>
-                          <input 
-                            id="os-attachment-upload-form"
-                            type="file"
-                            className="hidden"
-                            onChange={(e) => {
-                              if (e.target.files && e.target.files[0]) {
-                                const file = e.target.files[0];
-                                const reader = new FileReader();
-                                reader.onload = () => {
-                                  const resultString = reader.result as string;
-                                  const base64 = resultString.split(",")[1] || "";
-                                  
-                                  // Instantly parse and update maintenance cards
-                                  parseAndIntegrateFileData(file.name, base64, "manutencao");
-                                  
-                                  // Also add to uploaded files repo
-                                  const fileId = "upl-" + Math.random().toString(36).substr(2, 9) + "-" + Date.now();
-                                  setUploadedFiles(prev => [...prev, {
-                                    id: fileId,
-                                    name: file.name,
-                                    size: file.size > 1024 * 1024 ? (file.size / (1024 * 1024)).toFixed(2) + " MB" : (file.size / 1024).toFixed(0) + " KB",
-                                    type: file.type || "application/octet-stream",
-                                    uploadedAt: new Date().toISOString().split("T")[0],
-                                    status: "sucesso" as const,
-                                    content: base64,
-                                    service: "manutencao"
-                                  }]);
-                                  addToast("Sincronização Ativa", "Planilha de histórico agregada. Gráficos de evolução de custos atualizados instantaneamente!", "success");
-                                };
-                                reader.readAsDataURL(file);
-                              }
-                            }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => document.getElementById("os-attachment-upload-form")?.click()}
-                            className="text-xs uppercase font-mono tracking-wider font-extrabold text-[#00E676] hover:underline cursor-pointer bg-transparent border-0 inline-flex items-center gap-1.5"
-                          >
-                            <UploadCloud className="w-4 h-4" /> Importar Histórico de Evolução & Sincronizar OS antiga (.xlsx, .csv)
-                          </button>
-                          <p className={`text-[10px] mt-1 ${theme === "light" ? "text-slate-500" : "text-zinc-500"}`}>
-                            Anexe o arquivo de auditoria externa de manutenção para sincronização automática de histórico de evolução dos ativos.
-                          </p>
-                        </div>
-                      </div>
-                    </form>
-                  </motion.div>
-                )}
-
-                {/* Interactive Repair Costs Trend Linechart */}
-                <div className={`p-5 border rounded-2xl transition-all duration-200 ${
-                  theme === "contrast"
-                    ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                    : theme === "dark"
-                      ? "bg-zinc-950/35 border-zinc-900/60 text-slate-100"
-                      : "bg-white border-slate-200/90 shadow-xs text-slate-805"
-                }`}>
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4">
-                    <div>
-                      <h4 className={`font-display font-bold text-sm flex items-center gap-2 ${
-                        theme === "light" ? "text-slate-900" : "text-white"
-                      }`}>
-                        <TrendingUp className="w-4 h-4 text-[#00E676]" />
-                        Histórico e Evolução Mensal dos Custos de Reparos
-                      </h4>
-                      <p className={`text-[11px] ${
-                        theme === "light" ? "text-slate-505" : "text-zinc-400"
-                      }`}>
-                        Evolução mensal dos custos totais de reparo nos últimos 6 meses para apoiar as decisões estratégicas da Thais, Marília e Cris.
-                      </p>
-                    </div>
-                    
-                    <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded font-mono text-[10px] text-[#00E676] font-bold">
-                      <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
-                      CUSTO CORRENTE (JUN): R$ {calculatedStats.totalMaintenanceCost.toLocaleString("pt-BR")}
-                    </div>
-                  </div>
-
-                  <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={getMaintenanceMonthlyCosts()}>
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.06} stroke="#8b5cf6" />
-                        <XAxis 
-                          dataKey="name" 
-                          stroke="#71717a" 
-                          fontSize={10} 
-                          tickLine={false}
-                          axisLine={{ stroke: '#27272a' }}
-                        />
-                        <YAxis 
-                          stroke="#71717a" 
-                          fontSize={10} 
-                          tickLine={false}
-                          axisLine={{ stroke: '#27272a' }}
-                          tickFormatter={(v) => `R$ ${v / 1000}k`}
-                        />
-                        <Tooltip 
-                          contentStyle={{ 
-                            backgroundColor: "#0d0b18", 
-                            borderColor: "rgba(168, 85, 247, 0.2)",
-                            borderRadius: "10px",
-                            fontSize: "11px",
-                            color: "#fff"
-                          }}
-                          formatter={(value: any) => [`R$ ${Number(value).toLocaleString("pt-BR")}`, "Custo de Manutenção"]}
-                        />
-                        <Legend wrapperStyle={{ fontSize: "11px" }} />
-                        <Line 
-                          type="monotone" 
-                          dataKey="Custo" 
-                          name="Custo Consolidado de Reparos (R$)"
-                          stroke="#00E676" 
-                          strokeWidth={3.5}
-                          activeDot={{ r: 7 }}
-                          dot={{ stroke: '#00E676', strokeWidth: 2, fill: '#050408', r: 4 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-
-                {/* List Ledger and Interactive Action table */}
-                <div className={`p-5 rounded-2xl border space-y-4 transition-colors duration-200 ${
-                  theme === "contrast"
-                    ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-                    : theme === "dark"
-                      ? "bg-zinc-950/20 border-zinc-900/60 text-slate-100"
-                      : "bg-white border-slate-205 shadow-xs text-slate-805"
-                }`}>
-                  <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b ${
-                    theme === "light" ? "border-slate-100" : "border-zinc-900/40"
-                  }`}>
-                    <div>
-                      <h4 className={`font-display font-bold text-sm ${theme === "light" ? "text-slate-900 font-bold" : "text-white"}`}>Central de Chamados Residenciais & Industriais</h4>
-                      <p className={`text-[10.5px] ${theme === "light" ? "text-slate-500 font-medium" : "text-zinc-400"}`}>Todos os chamados requerem aprovação e alteração retroativa homologada.</p>
-                    </div>
-
-                    {/* Interactive Column Header Filters and Search */}
-                    <div className="flex flex-wrap items-center gap-2 justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="relative">
-                          <Search className="w-3.5 h-3.5 text-zinc-450 absolute left-2 top-2.5" />
-                          <input 
-                            type="text" 
-                            placeholder="Buscar equipamento, área, anotações..."
-                            value={osSearch}
-                            onChange={(e) => { setOsSearch(e.target.value); setOsPage(1); }}
-                            className={`border rounded-lg pl-7 pr-3 py-1.5 text-xs focus:outline-none transition w-64 ${
-                              theme === "light"
-                                ? "bg-slate-50 border-slate-250 text-slate-900 font-semibold focus:border-amber-500"
-                                : "bg-[#050407] border-zinc-900 text-white focus:border-amber-500"
-                            }`}
-                          />
-                        </div>
-                        
-                        {(osStatusFilter !== "Todas" || osPriorityFilter !== "Todas" || osAreaFilter !== "Todas" || osUnitFilter !== "Todas" || osExecutorFilter !== "Todos" || osSearch !== "" || osSortOrder !== null) && (
-                          <button
-                            onClick={() => {
-                              setOsStatusFilter("Todas");
-                              setOsPriorityFilter("Todas");
-                              setOsAreaFilter("Todas");
-                              setOsUnitFilter("Todas");
-                              setOsExecutorFilter("Todos");
-                              setOsSearch("");
-                              setOsSortOrder(null);
-                              setOsPage(1);
-                              addToast("Filtros Limpos", "Todos os critérios de busca foram reiniciados.", "info");
-                            }}
-                            className="px-2.5 py-1 text-[10px] uppercase font-mono tracking-wider bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded border border-red-500/20 transition cursor-pointer"
-                          >
-                            Limpar Filtros ✕
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="text-[10px] font-mono text-zinc-500 uppercase">
-                        Mostrando <strong>{filteredOSList.length}</strong> O.S. • Clique na linha para ver anotações
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Compact Interactive Table */}
-                  <div className={`border rounded-xl overflow-hidden shadow-xs ${
-                    theme === "contrast" ? "border-[#FFFF00]" : "border-zinc-300 dark:border-zinc-800"
-                  }`}>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs text-slate-350 border-collapse table-auto">
-                        <thead>
-                          <tr className="bg-gradient-to-r from-amber-600 to-orange-600 text-white font-bold select-none border-b border-orange-700">
-                            <th className="py-3 px-3 uppercase text-[10px] font-black tracking-wider text-center border-r border-orange-500/20">OS ID</th>
-                            
-                            {/* SITUAÇÃO Column with drop down filter */}
-                            <th className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider border-r border-orange-500/20 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <span className="font-sans font-extrabold text-[10.5px]">Situação</span>
-                                <select
-                                  value={osStatusFilter}
-                                  onChange={(e) => { setOsStatusFilter(e.target.value); setOsPage(1); }}
-                                  className="bg-orange-800/90 text-white text-[9.5px] font-bold rounded border border-orange-400/30 py-0.5 px-1.5 focus:ring-1 focus:ring-white cursor-pointer outline-none"
-                                >
-                                  <option value="Todas">Tudo ▼</option>
-                                  <option value="Pendente">Pendentes</option>
-                                  <option value="Em Execução">Em Exec.</option>
-                                  <option value="Concluído">Concluídas</option>
-                                </select>
-                              </div>
-                            </th>
-
-                            {/* DEMANDAS Column with search indicator */}
-                            <th className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider border-r border-orange-500/20">
-                              <div className="flex items-center gap-1">
-                                <span className="font-sans font-extrabold text-[10.5px]">Demandas</span>
-                              </div>
-                            </th>
-
-                            {/* DATA CONCLUSÃO Column with interactive sort */}
-                            <th 
-                              onClick={() => {
-                                setOsSortOrder(prev => prev === "asc" ? "desc" : prev === "desc" ? null : "asc");
-                                setOsPage(1);
-                              }}
-                              className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider border-r border-orange-500/20 text-center cursor-pointer hover:bg-orange-700/50 transition-colors"
-                            >
-                              <div className="flex items-center justify-center gap-1">
-                                <span className="font-sans font-extrabold text-[10.5px]">Data Conclusão</span>
-                                <ArrowUpDown className={`w-3 h-3 text-orange-250 ${osSortOrder ? "text-white animate-bounce" : ""}`} />
-                                {osSortOrder === "asc" && <span className="text-[8px] bg-orange-850 px-1 rounded">▲</span>}
-                                {osSortOrder === "desc" && <span className="text-[8px] bg-orange-850 px-1 rounded">▼</span>}
-                              </div>
-                            </th>
-
-                            {/* EXECUTOR Column with drop down filter */}
-                            <th className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider border-r border-orange-500/20 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <span className="font-sans font-extrabold text-[10.5px]">Executor</span>
-                                <select
-                                  value={osExecutorFilter}
-                                  onChange={(e) => { setOsExecutorFilter(e.target.value); setOsPage(1); }}
-                                  className="bg-orange-800/90 text-white text-[9.5px] font-bold rounded border border-orange-400/30 py-0.5 px-1.5 focus:ring-1 focus:ring-white cursor-pointer outline-none max-w-[100px]"
-                                >
-                                  <option value="Todos">Tudo ▼</option>
-                                  {Array.from(new Set(maintenanceTickets.map(o => o.requester))).filter(Boolean).map(exec => (
-                                    <option key={exec} value={exec}>{exec}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </th>
-
-                            {/* CLASSIFICAÇÃO Column with drop down filter */}
-                            <th className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider border-r border-orange-500/20 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <span className="font-sans font-extrabold text-[10.5px]">Classificação</span>
-                                <select
-                                  value={osPriorityFilter}
-                                  onChange={(e) => { setOsPriorityFilter(e.target.value); setOsPage(1); }}
-                                  className="bg-orange-800/90 text-white text-[9.5px] font-bold rounded border border-orange-400/30 py-0.5 px-1.5 focus:ring-1 focus:ring-white cursor-pointer outline-none"
-                                >
-                                  <option value="Todas">Tudo ▼</option>
-                                  <option value="Alta">Alta</option>
-                                  <option value="Média">Média</option>
-                                  <option value="Baixa">Baixa</option>
-                                </select>
-                              </div>
-                            </th>
-
-                            {/* SETOR Column with drop down filter */}
-                            <th className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider border-r border-orange-500/20 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <span className="font-sans font-extrabold text-[10.5px]">Setor</span>
-                                <select
-                                  value={osAreaFilter}
-                                  onChange={(e) => { setOsAreaFilter(e.target.value); setOsPage(1); }}
-                                  className="bg-orange-800/90 text-white text-[9.5px] font-bold rounded border border-orange-400/30 py-0.5 px-1.5 focus:ring-1 focus:ring-white cursor-pointer outline-none max-w-[100px]"
-                                >
-                                  <option value="Todas">Tudo ▼</option>
-                                  {Array.from(new Set(maintenanceTickets.map(o => o.area))).filter(Boolean).map(area => (
-                                    <option key={area} value={area}>{area}</option>
-                                  ))}
-                                </select>
-                              </div>
-                            </th>
-
-                            {/* SESI/SENAI Column with drop down filter */}
-                            <th className="py-2.5 px-3 uppercase text-[10px] font-black tracking-wider text-center">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <span className="font-sans font-extrabold text-[10.5px]">SESI/SENAI</span>
-                                <select
-                                  value={osUnitFilter}
-                                  onChange={(e) => { setOsUnitFilter(e.target.value); setOsPage(1); }}
-                                  className="bg-orange-800/90 text-white text-[9.5px] font-bold rounded border border-orange-400/30 py-0.5 px-1.5 focus:ring-1 focus:ring-white cursor-pointer outline-none"
-                                >
-                                  <option value="Todas">Tudo ▼</option>
-                                  <option value="SESI">SESI</option>
-                                  <option value="SENAI">SENAI</option>
-                                  <option value="FIRJAN">FIRJAN</option>
-                                </select>
-                              </div>
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className={`divide-y ${
-                          theme === "light" ? "divide-slate-200" : "divide-zinc-800/60"
-                        }`}>
-                          {filteredOSList.slice((osPage - 1) * osPageSize, osPage * osPageSize).map((os) => {
-                            const priorityColor = theme === "light" ? {
-                              "Alta": "text-red-750 bg-red-50 border-red-200 font-extrabold",
-                              "Média": "text-amber-800 bg-amber-50 border-amber-250 font-extrabold",
-                              "Baixa": "text-blue-800 bg-blue-50 border-blue-200 font-extrabold",
-                            }[os.priority] : {
-                              "Alta": "text-red-450 bg-red-950/20 border-red-900/30",
-                              "Média": "text-amber-400 bg-amber-950/20 border-amber-900/30",
-                              "Baixa": "text-blue-450 bg-blue-950/20 border-blue-900/30",
-                            }[os.priority];
-
-                            return (
-                              <tr 
-                                key={os.id} 
-                                onClick={() => setSelectedOSForModal(os)}
-                                className={`transition duration-150 cursor-pointer ${
-                                  theme === "light" 
-                                    ? "hover:bg-amber-500/5 bg-white text-slate-700" 
-                                    : "hover:bg-amber-500/10 bg-black/10 text-slate-300"
-                                }`}
-                                title="Clique para abrir detalhes e anotações completas"
-                              >
-                                <td className={`py-3 px-3 font-mono font-black text-center text-[11px] ${
-                                  theme === "light" ? "text-slate-800" : "text-white"
-                                }`}>{os.id}</td>
-                                
-                                <td className="py-2.5 px-2 text-center" onClick={(e) => e.stopPropagation()}>
-                                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-extrabold inline-block min-w-[85px] ${
-                                    os.status === "Concluído" ? (theme === "light" ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-emerald-950/30 text-emerald-400 border border-emerald-500/20") :
-                                    os.status === "Em Execução" ? (theme === "light" ? "bg-amber-50 text-amber-800 border border-amber-200" : "bg-amber-950/30 text-amber-400 border border-amber-500/20") :
-                                    (theme === "light" ? "bg-red-50 text-red-800 border border-red-200" : "bg-red-950/30 text-red-400 border border-red-500/15")
-                                  }`}>
-                                    {os.status}
-                                  </span>
-                                </td>
-
-                                <td className="py-3 px-3 font-bold font-sans">
-                                  <div className={`font-semibold text-xs ${theme === "light" ? "text-slate-900" : "text-white"}`}>{os.equipment}</div>
-                                  <div className="text-[10px] font-normal text-zinc-500 truncate max-w-[180px]" title={os.description}>{os.description}</div>
-                                </td>
-
-                                <td className="py-3 px-2 font-mono text-[11px] text-center font-bold">
-                                  {os.date || "S/D"}
-                                </td>
-
-                                <td className="py-3 px-2 font-medium text-center truncate max-w-[100px]" title={os.requester}>
-                                  {os.requester}
-                                </td>
-
-                                <td className="py-3 px-2 text-center">
-                                  <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${priorityColor}`}>
-                                    {os.priority}
-                                  </span>
-                                </td>
-
-                                <td className="py-3 px-2 text-center uppercase truncate max-w-[100px]" title={os.area}>
-                                  {os.area}
-                                </td>
-
-                                <td className="py-3 px-2 text-center font-extrabold text-purple-600 dark:text-purple-400 text-[10.5px]">
-                                  {os.unit}
-                                </td>
-                              </tr>
-                            );
-                          })}
-
-                          {filteredOSList.length === 0 && (
-                            <tr>
-                              <td colSpan={8} className="py-12 text-center text-zinc-500 italic font-mono">
-                                Nenhum chamado localizado para as combinações de filtros selecionadas.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Pagination control footer for "Central de Chamados" to make it "less extensive" */}
-                  {filteredOSList.length > osPageSize && (
-                    <div className="flex items-center justify-between pt-2">
-                      <button
-                        disabled={osPage === 1}
-                        onClick={() => setOsPage(prev => Math.max(prev - 1, 1))}
-                        className="px-3 py-1 bg-zinc-800 disabled:opacity-35 disabled:hover:bg-zinc-800 hover:bg-zinc-700 text-white rounded text-xs font-mono font-bold transition cursor-pointer"
-                      >
-                        ◄ Anterior
-                      </button>
-                      <span className="text-[11px] font-mono text-zinc-500">
-                        Página <strong>{osPage}</strong> de <strong>{Math.ceil(filteredOSList.length / osPageSize)}</strong> (Total: {filteredOSList.length} chamados)
-                      </span>
-                      <button
-                        disabled={osPage >= Math.ceil(filteredOSList.length / osPageSize)}
-                        onClick={() => setOsPage(prev => Math.min(prev + 1, Math.ceil(filteredOSList.length / osPageSize)))}
-                        className="px-3 py-1 bg-zinc-800 disabled:opacity-35 disabled:hover:bg-zinc-800 hover:bg-zinc-700 text-white rounded text-xs font-mono font-bold transition cursor-pointer"
-                      >
-                        Próximo ►
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Details and Complete Annotations Modal for O.S. */}
-                  {selectedOSForModal && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs">
-                      <div className={`w-full max-w-xl rounded-2xl border p-6 shadow-2xl transition-all duration-300 ${
-                        theme === "dark" ? "bg-zinc-950 border-purple-900/40 text-white" : "bg-white border-slate-200 text-slate-800"
-                      }`}>
-                        <div className="flex items-center justify-between pb-3 border-b border-zinc-500/15 mb-4">
-                          <h3 className="font-display font-black text-base flex items-center gap-2">
-                            <span className="text-amber-500">#{selectedOSForModal.id}</span>
-                            <span>Ordem de Serviço</span>
-                          </h3>
-                          <button 
-                            onClick={() => setSelectedOSForModal(null)}
-                            className="p-1 rounded-full hover:bg-zinc-500/10 text-zinc-400 hover:text-white font-bold text-sm cursor-pointer border-0 bg-transparent"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                        
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Equipamento Alvo</span>
-                              <span className="font-extrabold text-sm">{selectedOSForModal.equipment}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Setor / Local</span>
-                              <span className="font-extrabold text-sm uppercase">{selectedOSForModal.area}</span>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-4">
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Classificação</span>
-                              <span className="font-bold text-xs uppercase text-amber-500">{selectedOSForModal.priority}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">SESI/SENAI</span>
-                              <span className="font-bold text-xs uppercase">{selectedOSForModal.unit}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Solicitante/Executor</span>
-                              <span className="font-bold text-xs">{selectedOSForModal.requester}</span>
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Data de Conclusão</span>
-                              <span className="font-bold text-xs">{selectedOSForModal.date || "Sem data informada"}</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] uppercase font-mono text-zinc-500 block">Custo Estimado</span>
-                              <span className="font-bold text-xs text-amber-550">R$ {selectedOSForModal.cost?.toLocaleString("pt-BR")}</span>
-                            </div>
-                          </div>
-
-                          <div className="pt-3 border-t border-zinc-500/15">
-                            <span className="text-[10px] uppercase font-mono text-zinc-500 block mb-1">Anotações Completas da O.S.</span>
-                            <div className={`p-4 rounded-xl font-sans text-xs leading-relaxed whitespace-pre-wrap ${
-                              theme === "dark" ? "bg-zinc-900/60 text-zinc-300" : "bg-slate-50 text-slate-700"
-                            }`}>
-                              {selectedOSForModal.description || "Sem anotações complementares registradas."}
-                            </div>
-                          </div>
-
-                          <div className="pt-3 border-t border-zinc-500/15">
-                            <span className="text-[10px] uppercase font-mono text-zinc-500 block mb-2">Alterar Status</span>
-                            <div className="flex gap-2">
-                              {selectedOSForModal.status !== "Pendente" && (
-                                <button
-                                  onClick={() => {
-                                    handleUpdateOSStatus(selectedOSForModal.id, "Pendente");
-                                    setSelectedOSForModal(prev => prev ? { ...prev, status: "Pendente" } : null);
-                                  }}
-                                  className="px-3 py-1 bg-red-650 hover:bg-red-700 text-white rounded text-xs font-bold transition uppercase"
-                                >
-                                  Pendente
-                                </button>
-                              )}
-                              {selectedOSForModal.status !== "Em Execução" && (
-                                <button
-                                  onClick={() => {
-                                    handleUpdateOSStatus(selectedOSForModal.id, "Em Execução");
-                                    setSelectedOSForModal(prev => prev ? { ...prev, status: "Em Execução" } : null);
-                                  }}
-                                  className="px-3 py-1 bg-amber-650 hover:bg-amber-700 text-white rounded text-xs font-bold transition uppercase"
-                                >
-                                  Em Execução
-                                </button>
-                              )}
-                              {selectedOSForModal.status !== "Concluído" && (
-                                <button
-                                  onClick={() => {
-                                    handleUpdateOSStatus(selectedOSForModal.id, "Concluído");
-                                    setSelectedOSForModal(prev => prev ? { ...prev, status: "Concluído" } : null);
-                                  }}
-                                  className="px-3 py-1 bg-emerald-650 hover:bg-emerald-700 text-white rounded text-xs font-bold transition uppercase"
-                                >
-                                  Concluir O.S.
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-6 flex justify-end gap-2 border-t border-zinc-500/15 pt-4">
-                          <button
-                            onClick={() => {
-                              exportOSToPDF(selectedOSForModal);
-                              addToast("PDF Exportado", `Ordem de Serviço ${selectedOSForModal.id} baixada.`, "success");
-                            }}
-                            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                          >
-                            Exportar PDF
-                          </button>
-                          <button
-                            onClick={() => setSelectedOSForModal(null)}
-                            className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition cursor-pointer"
-                          >
-                            Fechar
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                </div>
-
-                {/* Intelligent Attachment Audit Segment */}
-                {renderEmbeddedFileIntelligence("manutencao")}
+                <MaintenanceDashboard
+                  tickets={maintenanceTickets}
+                  setTickets={setMaintenanceTickets}
+                  theme={theme}
+                  activeSubTab={maintenanceSubTab}
+                  setActiveSubTab={setMaintenanceSubTab}
+                  showAddOSModal={showAddOSModal}
+                  setShowAddOSModal={setShowAddOSModal}
+                  newOS={newOS}
+                  setNewOS={setNewOS}
+                  handleCreateOS={handleCreateOS}
+                  addToast={addToast}
+                  exportOSToPDF={exportOSToPDF}
+                />
 
               </motion.div>
             )}
@@ -6476,7 +6007,7 @@ export default function App() {
                       theme === "light" ? "text-slate-500 font-bold" : "text-zinc-400"
                     }`}>Liquidez em Atrasos</p>
                     <h4 className={`text-xl font-bold font-mono mt-1 ${
-                      theme === "light" ? "text-red-650" : "text-red-400 animate-pulse"
+                      theme === "light" ? "text-red-600" : "text-red-400 animate-pulse"
                     }`}>
                       R$ {calculatedStats.overdueBilling.toLocaleString("pt-BR")}
                     </h4>
@@ -6553,7 +6084,7 @@ export default function App() {
                           onChange={(e) => setIssuedClient(e.target.value)}
                           className={`w-full border rounded px-2.5 py-1.5 text-xs transition duration-150 focus:outline-none focus:ring-1 focus:ring-amber-500 ${
                             theme === "light" 
-                              ? "bg-slate-50 border-slate-200 text-slate-905" 
+                              ? "bg-slate-50 border-slate-200 text-slate-900" 
                               : "bg-[#050407] border-zinc-800 text-white"
                           }`}
                         />
@@ -6572,7 +6103,7 @@ export default function App() {
                             onChange={(e) => setIssuedValue(e.target.value)}
                             className={`w-full border rounded px-2.5 py-1.5 text-xs transition duration-150 focus:outline-none focus:ring-1 focus:ring-amber-500 ${
                               theme === "light" 
-                                ? "bg-slate-50 border-slate-200 text-slate-905" 
+                                ? "bg-slate-50 border-slate-200 text-slate-900" 
                                 : "bg-[#050407] border-zinc-800 text-white"
                             }`}
                           />
@@ -6588,7 +6119,7 @@ export default function App() {
                             onChange={(e) => setIssuedDueDate(e.target.value)}
                             className={`w-full border rounded px-2 text-xs transition duration-150 focus:outline-none focus:ring-1 focus:ring-amber-500 h-[30px] ${
                               theme === "light" 
-                                ? "bg-slate-50 border-slate-200 text-slate-905" 
+                                ? "bg-slate-50 border-slate-200 text-slate-900" 
                                 : "bg-[#050407] border-zinc-800 text-white"
                             }`}
                           />
@@ -6607,7 +6138,7 @@ export default function App() {
                           onChange={(e) => setIssuedServiceType(e.target.value)}
                           className={`w-full border rounded px-2.5 py-1.5 text-xs transition duration-150 focus:outline-none focus:ring-1 focus:ring-amber-500 ${
                             theme === "light" 
-                              ? "bg-slate-50 border-slate-200 text-slate-905" 
+                              ? "bg-slate-50 border-slate-200 text-slate-900" 
                               : "bg-[#050407] border-zinc-800 text-white"
                           }`}
                         />
@@ -6615,7 +6146,7 @@ export default function App() {
 
                       <button
                         type="submit"
-                        className="w-full py-2 bg-amber-600 hover:bg-amber-505 font-bold text-xs uppercase rounded text-black transition duration-150 font-display cursor-pointer"
+                        className="w-full py-2 bg-amber-600 hover:bg-amber-500 font-bold text-xs uppercase rounded text-black transition duration-150 font-display cursor-pointer"
                       >
                         Gerar Parcela Fatura
                       </button>
@@ -6936,7 +6467,7 @@ export default function App() {
                             theme === "light" ? "hover:bg-slate-50" : "hover:bg-zinc-900/10"
                           }`}>
                             <td className={`py-3 font-mono font-bold text-[11px] ${
-                              theme === "light" ? "text-slate-805" : "text-white"
+                              theme === "light" ? "text-slate-800" : "text-white"
                             }`}>{inv.id}</td>
                             <td className={`py-3 font-bold pr-2 font-display ${
                               theme === "light" ? "text-slate-900" : "text-white"
@@ -7017,7 +6548,7 @@ export default function App() {
                       onClick={() => setActiveSubApp("none")}
                       className={`p-1.5 rounded-lg border transition ${
                         theme === "light"
-                          ? "bg-white border-slate-200 text-slate-805 hover:bg-slate-100"
+                          ? "bg-white border-slate-200 text-slate-800 hover:bg-slate-100"
                           : "bg-zinc-950/40 border-zinc-800 text-zinc-400 hover:text-white"
                       }`}
                       title="Voltar ao Painel"

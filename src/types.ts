@@ -1,28 +1,36 @@
-export type UserRole = "Administrador Global" | "Gestora" | "Coordenador" | "Colaborador";
-
-export interface UserSession {
+export interface MaintenanceTicket {
   id: string;
-  name: string;
-  role: UserRole;
-  avatar: string;
-  email: string;
-  unit: string;
-  department: string;
+  equipment: string;
+  area: string;
+  priority: "Alta" | "Média" | "Baixa";
+  requester: string;
+  date: string;
+  description: string;
+  status: "Pendente" | "Em Execução" | "Concluído";
+  cost: number;
+  unit?: "SESI" | "SENAI" | string;
+  product?: "Saúde" | "Segurança do Trabalho" | "Educação Básica" | "Educação Profissional" | string;
+  syncStatus?: "Sincronizado" | "Pendente";
+  executor?: string;
+  classification?: string;
+  conclusionDate?: string;
 }
 
-export interface RACIEntry {
-  activity: string;
-  responsible: string; // R
-  accountable: string; // A
-  consulted: string;   // C
-  informed: string;    // I
+export interface ProjectTask {
+  id: string;
+  title: string;
+  assignedTo: string;
+  status: "Concluído" | "Em Andamento" | "Pendente" | string;
+  priority: "Alta" | "Média" | "Baixa" | string;
+  startDate: string;
+  endDate: string;
 }
 
 export interface RiskItem {
   id: string;
   title: string;
-  probability: "Baixa" | "Média" | "Alta";
-  impact: "Baixo" | "Médio" | "Alto";
+  probability: "Alta" | "Média" | "Baixa" | string;
+  impact: "Alto" | "Médio" | "Baixo" | string;
   mitigation: string;
 }
 
@@ -30,18 +38,16 @@ export interface Stakeholder {
   id: string;
   name: string;
   role: string;
-  engagement: "Informativo" | "Ativo" | "Apoiador" | "Neutro";
+  engagement: "Ativo" | "Apoiador" | "Neutro" | string;
   unit: string;
 }
 
-export interface ProjectTask {
-  id: string;
-  title: string;
-  assignedTo: string;
-  status: "Pendente" | "Em Andamento" | "Revisão" | "Concluído";
-  priority: "Baixa" | "Média" | "Alta";
-  startDate: string;
-  endDate: string;
+export interface RACIEntry {
+  activity: string;
+  responsible: string;
+  accountable: string;
+  consulted: string;
+  informed: string;
 }
 
 export interface Project {
@@ -49,40 +55,20 @@ export interface Project {
   name: string;
   objective: string;
   manager: string;
-  area: "Tecnologia" | "Educação" | "Infraestrutura" | "Inovação" | "Eventos";
-  unit: "Firjan" | "SENAI" | "SESI" | "IEL";
+  area: "Tecnologia" | "Educação" | "Infraestrutura" | "Inovação" | "Eventos" | string;
+  unit: "Firjan" | "SENAI" | "SESI" | "IEL" | string;
   startDate: string;
   deadline: string;
   budget: number;
   spent: number;
-  status: "Planejamento" | "Em Andamento" | "Em Atenção" | "Atrasado" | "Concluído";
-  priority: "Média" | "Alta" | "Crítica";
-  progress: number; // 0 to 100
-  tasks: ProjectTask[];
-  risks: RiskItem[];
-  stakeholders: Stakeholder[];
-  raci: RACIEntry[];
+  status: "Em Andamento" | "Em Atenção" | "Atrasado" | "Planejamento" | string;
+  priority: "Média" | "Alta" | "Crítica" | string;
+  progress: number;
+  tasks?: ProjectTask[];
+  risks?: RiskItem[];
+  stakeholders?: Stakeholder[];
+  raci?: RACIEntry[];
   lessonsLearned?: string[];
-}
-
-export interface Contrato {
-  id: string;
-  title: string;
-  supplier: string;
-  value: number;
-  status: "Rascunho" | "Em Análise" | "Ativo" | "Encerrado";
-  date: string;
-}
-
-export interface ServicoRequest {
-  id: string;
-  title: string;
-  requester: string;
-  department: string;
-  date: string;
-  priority: "Baixa" | "Média" | "Alta";
-  status: "Pendente" | "Aprovado" | "Rejeitado" | "Em Atendimento";
-  value?: number;
 }
 
 export interface Employee {
@@ -90,24 +76,24 @@ export interface Employee {
   name: string;
   role: string;
   department: string;
-  unit: "Firjan" | "SENAI" | "SESI" | "IEL";
-  status: "Ativo" | "Férias" | "Licença";
+  unit: "Firjan" | "SENAI" | "SESI" | "IEL" | string;
+  status: "Ativo" | "Férias" | "Desligado" | string;
   hiredDate: string;
-  performanceScore: number; // 1-5 star or percent
+  performanceScore: number;
   pdiGoal: string;
-  pdiStatus: "Não Iniciado" | "Em Andamento" | "Concluído";
-  hoursBank: number; // plus or minus hours
+  pdiStatus: "Em Andamento" | "Concluído" | "Não Iniciado" | string;
+  hoursBank: number;
   trainingsCompleted: number;
 }
 
 export interface AcademicCourse {
   id: string;
   name: string;
-  type: "Técnico" | "Socioeducativo" | "Qualificação Profissional" | "Graduação";
-  unit: "SENAI" | "SESI";
+  type: string;
+  unit: string;
   enrolled: number;
-  evasionRate: number; // percentage
-  status: "Ativo" | "Pendente";
+  evasionRate: number;
+  status: string;
   teacher: string;
 }
 
@@ -127,27 +113,47 @@ export interface FinanceTransaction {
   category: string;
   amount: number;
   date: string;
-  costCenter: "Firjan" | "SENAI" | "SESI" | "IEL";
+  costCenter: string;
   description: string;
-  status: "Pago" | "Pendente";
+  status: "Pago" | "Pendente" | string;
 }
 
 export interface CorporateDocument {
   id: string;
   name: string;
-  format: "pdf" | "docx" | "xlsx" | "pptx" | "csv";
+  format: string;
   size: string;
   version: string;
   uploadedBy: string;
   uploadedAt: string;
-  status: "Aprovado" | "Em Revisão" | "Rascunho";
+  status: "Aprovado" | "Em Revisão" | string;
+}
+
+export interface Contrato {
+  id: string;
+  title: string;
+  supplier: string;
+  value: number;
+  status: "Ativo" | "Em Análise" | string;
+  date: string;
+}
+
+export interface ServicoRequest {
+  id: string;
+  title: string;
+  requester: string;
+  department: string;
+  date: string;
+  priority: "Alta" | "Média" | "Baixa" | string;
+  status: "Pendente" | "Aprovado" | "Em Atendimento" | string;
+  value: number;
 }
 
 export interface AuditLog {
   id: string;
   userEmail: string;
   userName: string;
-  role: UserRole;
+  role: string;
   action: string;
   module: string;
   timestamp: string;
@@ -158,7 +164,7 @@ export interface SystemNotification {
   id: string;
   title: string;
   body: string;
-  type: "approve" | "alert" | "info" | "success";
+  type: "approve" | "alert" | "success" | string;
   timestamp: string;
   read: boolean;
 }

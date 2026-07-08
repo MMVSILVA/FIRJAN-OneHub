@@ -383,3 +383,386 @@ export function exportInvoiceToPDF(inv: BillingInvoice) {
   // Save the PDF
   doc.save(`Fatura_${inv.id}.pdf`);
 }
+
+export function exportCustomBudgetReportToPDF(options: {
+  title: string;
+  subtitle: string;
+  includeKPIs: boolean;
+  includeUnits: boolean;
+  includeTopCC: boolean;
+  includeFileList: boolean;
+  includeRecentRows: boolean;
+  stats: {
+    totalOrcado: number;
+    totalRealizado: number;
+    variation: number;
+    executionRate: number;
+    sesiOrcado: number;
+    sesiRealizado: number;
+    senaiOrcado: number;
+    senaiRealizado: number;
+    firjanOrcado: number;
+    firjanRealizado: number;
+  };
+  topCCs: Array<{ name: string; value: number }>;
+  uploadedFiles: Array<{ name: string; size: string; uploadedAt: string; type: string }>;
+  recentRows: Array<any>;
+}) {
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4",
+  });
+
+  // --- Header Banner ---
+  doc.setFillColor(31, 23, 56); // Deep purple corporate theme
+  doc.rect(0, 0, 210, 38, "F");
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.text("FIRJAN SESI SENAI • ADMIN HUB", 15, 14);
+  
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.text("SISTEMA DE AUDITORIA ORÇAMENTÁRIA E DIRETORIA FINANCEIRA", 15, 19);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.setFillColor(168, 85, 247); // Light purple badge
+  doc.rect(145, 10, 50, 10, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.text("CONSOLIDADO YTD", 170, 16.5, { align: "center" });
+
+  // Title / Subtitle on page body
+  let currentY = 48;
+  doc.setTextColor(31, 23, 56);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.text(options.title.toUpperCase(), 15, currentY);
+  currentY += 6;
+
+  doc.setFont("helvetica", "italic");
+  doc.setTextColor(100, 100, 100);
+  doc.setFontSize(10);
+  doc.text(options.subtitle, 15, currentY);
+  currentY += 8;
+
+  doc.setTextColor(140, 140, 140);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.text(`Documento Executivo Gerado em: ${new Date().toLocaleDateString("pt-BR")} às ${new Date().toLocaleTimeString("pt-BR")} • Coordenadora Marília de Melo Brito`, 15, currentY);
+  currentY += 4;
+
+  doc.setDrawColor(220, 220, 220);
+  doc.setLineWidth(0.5);
+  doc.line(15, currentY, 195, currentY);
+  currentY += 10;
+
+  // --- Section: KPIs Summary ---
+  if (options.includeKPIs) {
+    doc.setTextColor(31, 23, 56);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("1. RESUMO EXECUTIVO DE CONTAS (YTD)", 15, currentY);
+    currentY += 6;
+
+    // Drawing 3 blocks for KPIs
+    const drawKpiCard = (x: number, y: number, w: number, h: number, title: string, value: string, sub: string, titleColor: [number, number, number]) => {
+      doc.setFillColor(248, 249, 250);
+      doc.rect(x, y, w, h, "F");
+      doc.setDrawColor(230, 230, 230);
+      doc.rect(x, y, w, h, "S");
+      
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(titleColor[0], titleColor[1], titleColor[2]);
+      doc.text(title, x + 4, y + 5);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(20, 20, 20);
+      doc.text(value, x + 4, y + 12);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(120, 120, 120);
+      doc.text(sub, x + 4, y + 18);
+    };
+
+    drawKpiCard(15, currentY, 56, 22, "TOTAL ORÇADO (PLANEJADO)", `R$ ${options.stats.totalOrcado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, "Planejado para o ano fiscal", [100, 110, 120]);
+    drawKpiCard(76, currentY, 56, 22, "TOTAL REALIZADO (EXECUÇÃO)", `R$ ${options.stats.totalRealizado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, "Consumido em lançamentos reais", [168, 85, 247]);
+    
+    const isEconomia = options.stats.variation <= 0;
+    const varText = `R$ ${Math.abs(options.stats.variation).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+    const varStatus = isEconomia ? "Economia (Saving)" : "Desvio (Estouro)";
+    const cardColor: [number, number, number] = isEconomia ? [16, 124, 65] : [220, 38, 38];
+    drawKpiCard(137, currentY, 58, 22, `SALDO DE VARIAÇÃO (${varStatus})`, varText, isEconomia ? "Abaixo do teto planejado" : "Aviso de despesas excedidas", cardColor);
+
+    currentY += 27;
+
+    // Executive thermometer text
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text(`Taxa de Execução Orçamentária Geral: ${options.stats.executionRate.toFixed(1)}%`, 15, currentY);
+    
+    // Draw thermometer
+    doc.setFillColor(235, 235, 240);
+    doc.rect(15, currentY + 2, 180, 3, "F");
+    const barWidth = Math.min(180, (options.stats.executionRate / 100) * 180);
+    doc.setFillColor(147, 51, 234);
+    doc.rect(15, currentY + 2, barWidth, 3, "F");
+    
+    currentY += 12;
+  }
+
+  // --- Section: Breakdown by Units ---
+  if (options.includeUnits) {
+    doc.setTextColor(31, 23, 56);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("2. DESDOBRAMENTO POR ENTIDADE/ÓRGÃO", 15, currentY);
+    currentY += 6;
+
+    // Header of table
+    doc.setFillColor(31, 23, 56);
+    doc.rect(15, currentY, 180, 7, "F");
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text("Órgão", 18, currentY + 4.5);
+    doc.text("Teto Planejado (R$)", 60, currentY + 4.5);
+    doc.text("Execução Realizada (R$)", 110, currentY + 4.5);
+    doc.text("Exec. (%)", 165, currentY + 4.5);
+
+    currentY += 7;
+
+    const drawUnitRow = (name: string, planejado: number, realizado: number) => {
+      doc.setFillColor(252, 252, 253);
+      doc.rect(15, currentY, 180, 7, "F");
+      doc.setDrawColor(240, 240, 240);
+      doc.rect(15, currentY, 180, 7, "S");
+      
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(40, 40, 40);
+      doc.text(name, 18, currentY + 4.5);
+
+      doc.setFont("helvetica", "normal");
+      doc.text(planejado.toLocaleString("pt-BR", { minimumFractionDigits: 2 }), 60, currentY + 4.5);
+      doc.text(realizado.toLocaleString("pt-BR", { minimumFractionDigits: 2 }), 110, currentY + 4.5);
+      
+      const rate = planejado > 0 ? (realizado / planejado) * 100 : 0;
+      doc.setFont("helvetica", "bold");
+      doc.text(`${rate.toFixed(1)}%`, 165, currentY + 4.5);
+      currentY += 7;
+    };
+
+    drawUnitRow("SESI - Serviço Social da Indústria", options.stats.sesiOrcado, options.stats.sesiRealizado);
+    drawUnitRow("SENAI - Serviço Nacional de Aprendizagem", options.stats.senaiOrcado, options.stats.senaiRealizado);
+    drawUnitRow("FIRJAN - Federação das Indústrias", options.stats.firjanOrcado, options.stats.firjanRealizado);
+
+    currentY += 6;
+  }
+
+  // Check for page break if space is tight
+  if (currentY > 210) {
+    doc.addPage();
+    currentY = 20;
+  }
+
+  // --- Section: Top Offenders ---
+  if (options.includeTopCC && options.topCCs && options.topCCs.length > 0) {
+    doc.setTextColor(31, 23, 56);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("3. MAIORES CONSUMOS POR CENTRO DE CUSTO", 15, currentY);
+    currentY += 6;
+
+    doc.setFillColor(31, 23, 56);
+    doc.rect(15, currentY, 180, 7, "F");
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text("Centro de Custo", 18, currentY + 4.5);
+    doc.text("Consumo Registrado (R$)", 140, currentY + 4.5);
+
+    currentY += 7;
+
+    options.topCCs.forEach((cc) => {
+      doc.setFillColor(252, 252, 253);
+      doc.rect(15, currentY, 180, 7, "F");
+      doc.setDrawColor(240, 240, 240);
+      doc.rect(15, currentY, 180, 7, "S");
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(50, 50, 50);
+      doc.text(cc.name, 18, currentY + 4.5);
+      doc.text(cc.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 }), 140, currentY + 4.5);
+      
+      currentY += 7;
+    });
+
+    currentY += 6;
+  }
+
+  if (currentY > 210) {
+    doc.addPage();
+    currentY = 20;
+  }
+
+  // --- Section: Uploaded files ---
+  if (options.includeFileList && options.uploadedFiles && options.uploadedFiles.length > 0) {
+    doc.setTextColor(31, 23, 56);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("4. FONTES DE INFORMAÇÕES INTEGRADAS (REPOSITÓRIO)", 15, currentY);
+    currentY += 6;
+
+    doc.setFillColor(31, 23, 56);
+    doc.rect(15, currentY, 180, 7, "F");
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text("Nome do Relatório Carregado", 18, currentY + 4.5);
+    doc.text("Tamanho", 110, currentY + 4.5);
+    doc.text("Identificação de Tipo", 140, currentY + 4.5);
+
+    currentY += 7;
+
+    options.uploadedFiles.forEach((file) => {
+      doc.setFillColor(252, 252, 253);
+      doc.rect(15, currentY, 180, 7, "F");
+      doc.setDrawColor(240, 240, 240);
+      doc.rect(15, currentY, 180, 7, "S");
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(55, 55, 55);
+      doc.text(file.name.length > 50 ? file.name.substring(0, 48) + "..." : file.name, 18, currentY + 4.5);
+      doc.text(file.size, 110, currentY + 4.5);
+      
+      const isDet = file.name.toLowerCase().includes("detalhe") || file.name.toLowerCase().includes("orcamento") || file.name.toLowerCase().includes("abr") || file.name.toLowerCase().includes("mai");
+      const isRaz = file.name.toLowerCase().includes("razao") || file.name.toLowerCase().includes("extrato") || file.name.toLowerCase().includes("ledger");
+      let idType = isDet ? "Planilha de Detalhes Orçados" : isRaz ? "Razão de Auditoria Fiscal" : "Dados Orçamentários";
+      
+      doc.text(idType, 140, currentY + 4.5);
+      
+      currentY += 7;
+    });
+
+    currentY += 6;
+  }
+
+  if (currentY > 210) {
+    doc.addPage();
+    currentY = 20;
+  }
+
+  // --- Section: Recent Rows (Data Sample) ---
+  if (options.includeRecentRows && options.recentRows && options.recentRows.length > 0) {
+    doc.setTextColor(31, 23, 56);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("5. EXTRATO DE REGISTROS ORÇAMENTÁRIOS INTEGRADOS", 15, currentY);
+    currentY += 6;
+
+    doc.setFillColor(31, 23, 56);
+    doc.rect(15, currentY, 180, 7, "F");
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.text("Órgão", 18, currentY + 4.5);
+    doc.text("Centro de Custo", 40, currentY + 4.5);
+    doc.text("Descrição Conta N6", 90, currentY + 4.5);
+    doc.text("Tipo", 145, currentY + 4.5);
+    doc.text("Total (R$)", 165, currentY + 4.5);
+
+    currentY += 7;
+
+    const sample = options.recentRows.slice(0, 10);
+    sample.forEach((row) => {
+      doc.setFillColor(252, 252, 253);
+      doc.rect(15, currentY, 180, 7, "F");
+      doc.setDrawColor(240, 240, 240);
+      doc.rect(15, currentY, 180, 7, "S");
+      
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(60, 60, 60);
+      
+      const org = String(row["Organização"] || row["organizacao"] || "SESI").substring(0, 10);
+      const cc = String(row["Descricao Centro de Custo"] || row["Centro de Custo"] || "Geral").substring(0, 25);
+      const c6 = String(row["Descricao Conta N6"] || row["conta"] || "Salários").substring(0, 28);
+      const orig = String(row["Origem"] || row["tipo"] || "REALIZADO");
+      const totVal = row["Total"] || row["valor"] || "0";
+      const tot = Number(String(totVal).replace(/[^\d.-]/g, "")) || 0;
+
+      doc.text(org, 18, currentY + 4.5);
+      doc.text(cc, 40, currentY + 4.5);
+      doc.text(c6, 90, currentY + 4.5);
+      doc.text(orig, 145, currentY + 4.5);
+      doc.text(tot.toLocaleString("pt-BR", { minimumFractionDigits: 2 }), 165, currentY + 4.5);
+      
+      currentY += 7;
+    });
+
+    currentY += 6;
+  }
+
+  if (currentY > 215) {
+    doc.addPage();
+    currentY = 20;
+  }
+
+  // --- Signatures & Homologation ---
+  doc.setDrawColor(220, 220, 220);
+  doc.setLineWidth(0.5);
+  doc.line(15, currentY + 5, 195, currentY + 5);
+  currentY += 15;
+
+  doc.setTextColor(31, 23, 56);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("5. CERTIFICAÇÃO E AUDITORIA FINANCEIRA", 15, currentY);
+  currentY += 5;
+
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(80, 80, 80);
+  doc.setFontSize(8);
+  doc.text(
+    "Este relatório consolidado representa o fechamento e desdobramentos de gastos acumulados YTD do exercício financeiro. Todos os lançamentos foram auditados em tempo real através de cruzamento eletrônico com os extratos bancários das contas fiscais.",
+    15,
+    currentY,
+    { maxWidth: 180 }
+  );
+  currentY += 18;
+
+  // Signatures side by side
+  doc.line(15, currentY + 10, 95, currentY + 10);
+  doc.setFont("helvetica", "bold");
+  doc.text("Marília Moreira de Melo Brito", 55, currentY + 14, { align: "center" });
+  doc.setFont("helvetica", "italic");
+  doc.text("Coordenadora de Orçamento e Controle", 55, currentY + 18, { align: "center" });
+
+  doc.line(115, currentY + 10, 195, currentY + 10);
+  doc.setFont("helvetica", "bold");
+  doc.text("Diretoria Financeira • FIRJAN", 155, currentY + 14, { align: "center" });
+  doc.setFont("helvetica", "italic");
+  doc.text("Assinatura e Homologação", 155, currentY + 18, { align: "center" });
+
+  // Footer branding
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(150, 150, 150);
+  doc.setFontSize(8);
+  doc.text("FIRJAN ADMIN HUB • DEPARTAMENTO DE CONTROLADORIA E ORÇAMENTO", 105, 280, { align: "center" });
+
+  // Save document
+  doc.save(`${options.title.replace(/\s+/g, "_")}_YTD.pdf`);
+}

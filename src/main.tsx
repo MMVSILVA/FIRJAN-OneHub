@@ -7,6 +7,7 @@ import './index.css';
 window.addEventListener('error', (event) => {
   const errorMsg = String(event.message || event.error?.message || event.error || "");
   const errorObj = event.error || {};
+  
   const isWS = 
     errorMsg.includes("WebSocket") || 
     errorMsg.includes("websocket") || 
@@ -18,8 +19,28 @@ window.addEventListener('error', (event) => {
     (event.target && event.target.constructor && event.target.constructor.name === "WebSocket") ||
     (errorObj.target && errorObj.target.constructor && errorObj.target.constructor.name === "WebSocket");
 
-  if (isWS) {
-    // Ignore benign environment/websocket errors caused by disabled dev-server HMR
+  const isBenign =
+    errorMsg.includes("ResizeObserver") ||
+    errorMsg.includes("resize-observer") ||
+    errorMsg === "Script error." ||
+    errorMsg === "Uncaught Script error." ||
+    !errorMsg.trim() ||
+    (event.filename && (
+      event.filename.includes("chrome-extension") ||
+      event.filename.includes("extension") ||
+      event.filename.includes("translate") ||
+      event.filename.includes("google")
+    )) ||
+    (errorObj.stack && (
+      errorObj.stack.includes("chrome-extension://") ||
+      errorObj.stack.includes("safari-extension://")
+    ));
+
+  if (isWS || isBenign) {
+    // Ignore benign environment/websocket/extension errors
+    try {
+      event.preventDefault();
+    } catch {}
     return;
   }
 
@@ -48,6 +69,7 @@ window.addEventListener('error', (event) => {
 window.addEventListener('unhandledrejection', (event) => {
   const reasonStr = String(event.reason?.message || event.reason?.stack || event.reason || "");
   const reasonObj = event.reason || {};
+  
   const isWS = 
     reasonStr.includes("WebSocket") || 
     reasonStr.includes("websocket") || 
@@ -60,8 +82,24 @@ window.addEventListener('unhandledrejection', (event) => {
     (event.target && event.target.constructor && event.target.constructor.name === "WebSocket") ||
     (reasonObj.target && reasonObj.target.constructor && reasonObj.target.constructor.name === "WebSocket");
 
-  if (isWS) {
-    // Ignore benign environment/websocket errors caused by disabled dev-server HMR
+  const isBenign =
+    reasonStr.includes("ResizeObserver") ||
+    reasonStr.includes("resize-observer") ||
+    reasonStr === "Script error." ||
+    reasonStr === "Uncaught Script error." ||
+    !reasonStr.trim() ||
+    (reasonObj.stack && (
+      reasonObj.stack.includes("chrome-extension://") ||
+      reasonObj.stack.includes("safari-extension://") ||
+      reasonObj.stack.includes("extension") ||
+      reasonObj.stack.includes("google")
+    ));
+
+  if (isWS || isBenign) {
+    // Ignore benign environment/websocket/extension rejections
+    try {
+      event.preventDefault();
+    } catch {}
     return;
   }
 

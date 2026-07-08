@@ -411,7 +411,7 @@ export default function CalendarModule({
 
               {/* Tomorrow notice indicator */}
               <div className="text-[10px] font-mono text-zinc-500 mb-3 flex items-center gap-1 bg-zinc-950/20 p-1.5 rounded border border-zinc-900/30">
-                <Clock className="w-3.5 h-3.5 text-zinc-505" />
+                <Clock className="w-3.5 h-3.5 text-zinc-500" />
                 <span>Analisando vencimentos em amanhã: <strong className="text-zinc-300 font-bold">{tomorrowStr}</strong></span>
               </div>
 
