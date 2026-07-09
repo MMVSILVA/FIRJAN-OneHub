@@ -158,30 +158,29 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
 
   // Charts data
   const chartsData = useMemo(() => {
-    // 1. Costs by Classification
-    const classMap: Record<string, number> = {};
+    // 1. Costs by Classification (Now mapped to Quantity/Volume of OS)
     const classCountMap: Record<string, number> = {};
     tickets.forEach(t => {
       const cls = cleanStr(t.classification, "Outros");
-      classMap[cls] = (classMap[cls] || 0) + (Number(t.cost) || 0);
       classCountMap[cls] = (classCountMap[cls] || 0) + 1;
     });
-    const costByClass = Object.keys(classMap).map(name => ({
+    const costByClass = Object.keys(classCountMap).map(name => ({
       name,
-      custo: classMap[name],
+      custo: classCountMap[name], // Map to quantity to display volume instead of costs
       quantidade: classCountMap[name]
-    })).sort((a, b) => b.custo - a.custo);
+    })).sort((a, b) => b.quantidade - a.quantidade);
 
-    // 2. Costs by Sector / Area
-    const sectorMap: Record<string, number> = {};
+    // 2. Costs by Sector / Area (Now mapped to Quantity/Volume of OS)
+    const sectorCountMap: Record<string, number> = {};
     tickets.forEach(t => {
       const area = cleanStr(t.area, "Administração");
-      sectorMap[area] = (sectorMap[area] || 0) + (Number(t.cost) || 0);
+      sectorCountMap[area] = (sectorCountMap[area] || 0) + 1;
     });
-    const costBySector = Object.keys(sectorMap).map(name => ({
+    const costBySector = Object.keys(sectorCountMap).map(name => ({
       name,
-      custo: sectorMap[name]
-    })).sort((a, b) => b.custo - a.custo).slice(0, 8); // Top 8 sectors
+      custo: sectorCountMap[name], // Map to quantity
+      quantidade: sectorCountMap[name]
+    })).sort((a, b) => b.quantidade - a.quantidade).slice(0, 8); // Top 8 sectors
 
     // 3. Trend Q1: Completed vs Pending over time
     // Filter to Q1 2026 dates (Jan, Feb, Mar, Apr, May, Jun 2026)
@@ -235,6 +234,29 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
     }
   };
 
+  // Handle concluding a ticket (OS)
+  const handleConcludeOS = (ticketId: string) => {
+    setTickets(prev => prev.map(t => {
+      if (t.id === ticketId) {
+        const updated = { 
+          ...t, 
+          status: "Concluído" as const, 
+          conclusionDate: new Date().toISOString().split("T")[0] 
+        };
+        if (selectedTicket && selectedTicket.id === ticketId) {
+          setSelectedTicket(updated);
+        }
+        return updated;
+      }
+      return t;
+    }));
+    addToast(
+      "Manutenção Homologada", 
+      `A ordem de serviço ${ticketId} foi concluída e homologada com sucesso por Thais Nicolau da Silva Ferreira.`, 
+      "success"
+    );
+  };
+
   // Handle edit save
   const handleSaveEdit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -250,7 +272,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
     <div className="space-y-6">
       
       {/* KPIs Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Total Tickets */}
         <div className={`p-4 border rounded-xl transition-all ${
           theme === "contrast" 
@@ -306,26 +328,6 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
             <span className="text-[10px] text-emerald-500 font-bold font-mono">
               {stats.completionRate.toFixed(1)}% taxa
             </span>
-          </div>
-        </div>
-
-        {/* Real Cost Budget */}
-        <div className={`p-4 border rounded-xl transition-all ${
-          theme === "contrast" 
-            ? "bg-black border-[#FFFF00] text-[#FFFF00]"
-            : theme === "dark" 
-              ? "bg-zinc-950/40 border-zinc-900 text-slate-100" 
-              : "bg-white border-slate-200/90 shadow-xs text-slate-800"
-        }`}>
-          <div className="flex items-center justify-between">
-            <span className="text-xs uppercase font-mono tracking-wider text-slate-400">Custo Total Executado</span>
-            <DollarSign className="w-4 h-4 text-emerald-500" />
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <h4 className="text-xl font-bold font-mono text-emerald-600 dark:text-[#00E676]">
-              {formatCurrency(stats.completedCost)}
-            </h4>
-            <span className="text-[9px] text-slate-400 font-mono">Ativo</span>
           </div>
         </div>
       </div>
@@ -454,12 +456,13 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                     <th className="py-3 px-4 font-black">Classificação</th>
                     <th className="py-3 px-4 font-black">Setor</th>
                     <th className="py-3 px-4 font-black text-center">SESI/SENAI</th>
+                    <th className="py-3 px-4 font-black text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-500/10 text-xs">
                   {paginatedTickets.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400 font-mono">
+                      <td colSpan={8} className="py-8 text-center text-slate-400 font-mono">
                         Nenhuma ordem de serviço encontrada com os filtros selecionados.
                       </td>
                     </tr>
@@ -535,6 +538,26 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                               {ticket.unit || "SESI"}
                             </span>
                           </td>
+
+                          {/* Ações */}
+                          <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                              {!isCompleted ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleConcludeOS(ticket.id)}
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-[10px] uppercase font-bold rounded-md transition flex items-center gap-1 cursor-pointer border-none shadow-xs"
+                                  title="Finalizar esta Ordem de Serviço como Concluída"
+                                >
+                                  <Check className="w-3 h-3" /> Concluir
+                                </button>
+                              ) : (
+                                <span className="text-emerald-500 font-mono text-[9.5px] font-bold flex items-center gap-1 justify-end uppercase">
+                                  <CheckCircle2 className="w-3.5 h-3.5" /> OK
+                                </span>
+                              )}
+                            </div>
+                          </td>
                         </tr>
                       );
                     })
@@ -586,10 +609,10 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
           }`}>
             <h3 className="text-lg font-bold uppercase tracking-tight flex items-center gap-2 mb-2">
               <BarChart3 className="w-5 h-5 text-emerald-600 dark:text-[#00E676]" />
-              Análise de Distribuição e Custos Q1 2026
+              Análise de Distribuição de Demandas Q1 2026
             </h3>
             <p className="text-xs text-slate-400 mb-6">
-              Distribuição quantitativa e avaliação orçamentária das ordens de serviço por classificação no primeiro trimestre de 2026.
+              Distribuição quantitativa do volume de ordens de serviço por classificação no primeiro trimestre de 2026.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -607,17 +630,16 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                       </div>
                       <div className="text-right">
                         <div className="font-mono text-xs font-bold">{item.quantidade} OS</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{formatCurrency(item.custo)}</div>
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Mid graph: costs breakdown bar chart */}
+              {/* Mid graph: volume breakdown bar chart */}
               <div className="md:col-span-2 h-[300px]">
                 <h4 className="text-xs font-black uppercase font-mono tracking-wider text-slate-500 mb-3">
-                  Volume de Investimento Operacional (BRL)
+                  Volume de Atendimento por Classificação (Chamados)
                 </h4>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartsData.costByClass.slice(0, 5)}>
@@ -629,7 +651,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                       itemStyle={{ color: "#00E676" }}
                       labelStyle={{ color: "#fff" }}
                     />
-                    <Bar dataKey="custo" fill="#10b981" radius={[4, 4, 0, 0]}>
+                    <Bar dataKey="quantidade" name="Chamados" fill="#10b981" radius={[4, 4, 0, 0]}>
                       {chartsData.costByClass.slice(0, 5).map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={index === 0 ? "#10b981" : "#059669"} />
                       ))}
@@ -773,7 +795,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
             theme === "contrast" ? "bg-black border-[#FFFF00]" : theme === "dark" ? "bg-zinc-950/20 border-zinc-900" : "bg-white border-slate-200 shadow-xs"
           }`}>
             <h3 className="text-md font-bold uppercase tracking-tight mb-4 flex items-center gap-1.5">
-              <BarChart3 className="w-4 h-4 text-emerald-500" /> Custos de Manutenção por Setor / Local
+              <BarChart3 className="w-4 h-4 text-emerald-500" /> Demandas de Manutenção por Setor / Local
             </h3>
             <div className="h-[250px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -781,8 +803,8 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                   <CartesianGrid strokeDasharray="3 3" stroke="#252525" />
                   <XAxis type="number" stroke="#888888" fontSize={9} />
                   <YAxis dataKey="name" type="category" stroke="#888888" fontSize={9} width={100} />
-                  <Tooltip formatter={(v: any) => formatCurrency(Number(v))} />
-                  <Bar dataKey="custo" fill="#3b82f6" radius={[0, 4, 4, 0]} />
+                  <Tooltip formatter={(v: any) => [`${v} Chamados`, "Volume"]} />
+                  <Bar dataKey="quantidade" name="Chamados" fill="#3b82f6" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -835,7 +857,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                   <th className="py-3 px-4">Unidade</th>
                   <th className="py-3 px-4">Classificação</th>
                   <th className="py-3 px-4">Executor</th>
-                  <th className="py-3 px-4">Custo</th>
+                  <th className="py-3 px-4">Prioridade</th>
                   <th className="py-3 px-4 text-right">Ações</th>
                 </tr>
               </thead>
@@ -867,11 +889,28 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                           <span className="text-[11px] text-slate-400">{finalClassification}</span>
                         </td>
                         <td className="py-3 px-4 font-medium">{finalExecutor}</td>
-                        <td className="py-3 px-4 font-mono font-bold text-slate-700 dark:text-zinc-300">
-                          {formatCurrency(t.cost || 0)}
+                        <td className="py-3 px-4">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            t.priority === "Alta" 
+                              ? "bg-red-500/20 text-red-400"
+                              : t.priority === "Média"
+                                ? "bg-amber-500/20 text-amber-400"
+                                : "bg-blue-500/20 text-blue-400"
+                          }`}>
+                            {t.priority || "Média"}
+                          </span>
                         </td>
                         <td className="py-3 px-4 text-right whitespace-nowrap">
                           <div className="inline-flex items-center gap-1">
+                            {t.status !== "Concluído" && (
+                              <button
+                                title="Finalizar como Concluída"
+                                onClick={() => handleConcludeOS(t.id)}
+                                className="p-1 text-emerald-450 hover:text-emerald-400 hover:bg-emerald-500/10 rounded transition cursor-pointer bg-transparent border-none"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
                               title="Visualizar OS"
                               onClick={() => setSelectedTicket(t)}
@@ -1000,8 +1039,16 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                     <span className="font-bold text-emerald-500 font-mono mt-0.5 block">{selectedTicket.unit || "SESI"}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Custo de Reparo</span>
-                    <span className="font-bold text-slate-100 font-mono mt-0.5 block">{formatCurrency(selectedTicket.cost || 0)}</span>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Prioridade / Severidade</span>
+                    <span className={`inline-block px-2 py-0.5 mt-0.5 rounded text-[10px] font-black font-mono uppercase tracking-wider ${
+                      selectedTicket.priority === "Alta" 
+                        ? "bg-red-500/20 text-red-400"
+                        : selectedTicket.priority === "Média"
+                          ? "bg-amber-500/20 text-amber-400"
+                          : "bg-blue-500/20 text-blue-400"
+                    }`}>
+                      {selectedTicket.priority || "Média"}
+                    </span>
                   </div>
                 </div>
 
@@ -1028,25 +1075,70 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                   </p>
                 </div>
 
+                {/* Operations Bar (Editar, Excluir, Incluir) */}
+                <div className="pt-3 border-t border-zinc-800">
+                  <span className="text-[9px] text-slate-400 uppercase tracking-wider font-mono block mb-2">Ações de Gerenciamento</span>
+                  <div className="grid grid-cols-3 gap-2 w-full">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingTicket({ ...selectedTicket });
+                      }}
+                      className="py-1.5 px-2 bg-sky-950/40 hover:bg-sky-950/65 border border-sky-800 text-sky-400 hover:text-sky-300 font-bold rounded-lg cursor-pointer transition text-center flex items-center justify-center gap-1.5"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteTicket(selectedTicket.id);
+                      }}
+                      className="py-1.5 px-2 bg-red-950/40 hover:bg-red-950/65 border border-red-900 text-red-400 hover:text-red-300 font-bold rounded-lg cursor-pointer transition text-center flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Excluir
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAddOSModal(true);
+                      }}
+                      className="py-1.5 px-2 bg-emerald-950/40 hover:bg-emerald-950/65 border border-emerald-900 text-emerald-400 hover:text-emerald-300 font-bold rounded-lg cursor-pointer transition text-center flex items-center justify-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Incluir
+                    </button>
+                  </div>
+                </div>
+
                 {/* PDF export button */}
-                <div className="flex gap-2 pt-4 border-t border-zinc-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      exportOSToPDF(selectedTicket);
-                      addToast("Relatório PDF", `A Ordem de Serviço ${selectedTicket.id} foi salva como PDF.`, "success");
-                    }}
-                    className="flex-1 py-2 px-4 bg-emerald-800 hover:bg-emerald-700 text-white font-bold rounded-lg cursor-pointer transition text-center"
-                  >
-                    Exportar PDF 📄
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedTicket(null)}
-                    className="py-2 px-4 bg-zinc-800 hover:bg-zinc-700 text-slate-300 font-bold rounded-lg cursor-pointer transition"
-                  >
-                    Fechar
-                  </button>
+                <div className="flex flex-col gap-2 pt-3 border-t border-zinc-800/60">
+                  {selectedTicket.status !== "Concluído" && (
+                    <button
+                      type="button"
+                      onClick={() => handleConcludeOS(selectedTicket.id)}
+                      className="w-full py-2 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs font-black rounded-lg transition uppercase tracking-wider flex items-center justify-center gap-1.5 cursor-pointer border-none shadow-md"
+                    >
+                      <Check className="w-4 h-4" /> Finalizar como Concluída
+                    </button>
+                  )}
+                  <div className="flex gap-2 w-full">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        exportOSToPDF(selectedTicket);
+                        addToast("Relatório PDF", `A Ordem de Serviço ${selectedTicket.id} foi salva como PDF.`, "success");
+                      }}
+                      className="flex-1 py-2 px-4 bg-emerald-800 hover:bg-emerald-700 text-white font-bold rounded-lg cursor-pointer transition text-center text-xs"
+                    >
+                      Exportar PDF 📄
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTicket(null)}
+                      className="py-2 px-4 bg-zinc-800 hover:bg-zinc-700 text-slate-300 font-bold rounded-lg cursor-pointer transition text-xs"
+                    >
+                      Fechar
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
@@ -1179,19 +1271,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Cost */}
-                  <div>
-                    <label className="block text-slate-400 mb-1">Preço / Custo de Reparo (R$)</label>
-                    <input
-                      type="number"
-                      value={editingTicket.cost}
-                      onChange={(e) => setEditingTicket(prev => prev ? { ...prev, cost: Number(e.target.value) } : null)}
-                      className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 focus:outline-none focus:ring-1 focus:ring-sky-500 font-mono"
-                      required
-                    />
-                  </div>
-
+                <div>
                   {/* Dates */}
                   <div>
                     <label className="block text-slate-400 mb-1">Data de Conclusão</label>
@@ -1351,17 +1431,7 @@ export const MaintenanceDashboard: React.FC<MaintenanceDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* Cost */}
-                <div>
-                  <label className="block text-slate-400 mb-1">Preço / Custo de Reparo Estimado (R$)</label>
-                  <input
-                    type="number"
-                    value={newOS.cost}
-                    onChange={(e) => setNewOS(prev => ({ ...prev, cost: Number(e.target.value) }))}
-                    className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white font-mono"
-                    required
-                  />
-                </div>
+
 
                 {/* Description */}
                 <div>
