@@ -3766,6 +3766,32 @@ export default function App() {
 
           </motion.div>
 
+          {/* Global Reset Option below the login card */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.6, duration: 0.4 }}
+            className="mt-6 flex justify-center"
+            id="login-global-reset-container"
+          >
+            <button
+              id="btn-login-global-reset"
+              onClick={() => {
+                if (window.confirm("Aviso: Deseja realmente zerar todos os dados do sistema para todos os usuários e módulos? Esta ação apagará todas as planilhas carregadas e dados de simulação, limpando o armazenamento local.")) {
+                  clearAllDataAndCharts();
+                }
+              }}
+              className={`text-[10px] uppercase font-bold font-mono tracking-wider transition-all duration-150 flex items-center gap-1.5 px-4 py-2 rounded-xl border cursor-pointer ${
+                theme === "dark" 
+                  ? "bg-[#090710] border-purple-950/40 text-[#9E9BAE] hover:text-[#00E676] hover:border-[#00E676]/30 hover:bg-[#00E676]/5" 
+                  : "bg-white border-slate-200 text-slate-500 hover:text-purple-600 hover:bg-purple-50 hover:border-purple-200 shadow-xs"
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-500 shrink-0" />
+              Zerar Dados do Sistema (Todos os Usuários)
+            </button>
+          </motion.div>
+
         </div>
       ) : (
         /* AUTHENTICATED WORKSPACES COCKPIT (MODEL: SCREENSHOT 2 OR CUSTOM PER APP) */
@@ -3858,6 +3884,24 @@ export default function App() {
                   Hub Geral
                 </button>
               )}
+
+              {/* Zerar Dados Button */}
+              <button
+                id="btn-header-global-reset"
+                onClick={() => {
+                  if (window.confirm("Aviso: Deseja realmente zerar todos os dados do sistema para todos os usuários e módulos? Esta ação apagará todas as planilhas carregadas e dados de simulação, limpando o armazenamento local.")) {
+                    clearAllDataAndCharts();
+                  }
+                }}
+                className={`text-[10px] uppercase font-bold tracking-wider font-mono border px-3.5 py-1 rounded-lg transition duration-150 flex items-center gap-1 cursor-pointer ${
+                  theme === "dark"
+                    ? "border-amber-900/30 hover:border-amber-500/35 text-amber-400 hover:bg-amber-950/20"
+                    : "border-amber-200 hover:border-amber-500 text-amber-600 hover:bg-amber-50 bg-white"
+                }`}
+              >
+                <Trash2 className="w-3 h-3 shrink-0 text-red-500" />
+                Zerar Dados
+              </button>
 
               {/* Sair Button styled in high resolution styled like Screenshot 2 */}
               <button
