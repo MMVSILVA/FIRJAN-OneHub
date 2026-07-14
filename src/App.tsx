@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { 
   Wrench, Landmark, FileText, Lock, LogOut, ChevronRight,
-  Plus, Check, X, Bell, Sun, Moon, Search, Filter, ArrowUpDown,
+  Plus, Check, X, Bell, Sun, Moon, Monitor, Search, Filter, ArrowUpDown,
   TrendingUp, TrendingDown, DollarSign, Calendar, Sliders, Play,
   CheckCircle2, AlertTriangle, FileSpreadsheet, Send, User, Building,
   Activity, Shield, ShieldCheck, RefreshCw, BarChart3, HelpCircle,
@@ -176,7 +176,7 @@ const localStorage = {
 
 export default function App() {
   // Global States
-  const [theme, setTheme] = useState<"dark" | "light" | "contrast">("dark");
+  const [themeMode, setThemeMode] = useState<"dark" | "light" | "contrast" | "system">("dark");
   const [fontSizeScale, setFontSizeScale] = useState<number>(100);
   const [dyslexicFont, setDyslexicFont] = useState<boolean>(false);
   const [grayscale, setGrayscale] = useState<boolean>(false);
@@ -184,6 +184,37 @@ export default function App() {
   const [emailInput, setEmailInput] = useState<string>("");
   const [tokenInput, setTokenInput] = useState<string>("");
   const [tokenError, setTokenError] = useState<string>("");
+  const [showSplash, setShowSplash] = useState<boolean>(true);
+
+  // Resolve theme if set to 'system'
+  const [systemTheme, setSystemTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleChange = (e: MediaQueryListEvent) => {
+        setSystemTheme(e.matches ? "dark" : "light");
+      };
+      setSystemTheme(mediaQuery.matches ? "dark" : "light");
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+  }, []);
+
+  const theme = themeMode === "system" ? systemTheme : (themeMode === "light" ? "light" : (themeMode === "contrast" ? "contrast" : "dark"));
+
+  // Sync splash timer
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+    }, 10000); // 10 seconds
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Sync theme selection to localStorage if desired, but we can also just use the setter
+  const setTheme = (val: "dark" | "light" | "contrast") => {
+    setThemeMode(val);
+  };
 
   // Speech TTS Narrator for Accessibility
   const handleToggleSpeak = (text: string) => {
@@ -3666,6 +3697,110 @@ export default function App() {
   };
 
   // Render Page Content
+  if (showSplash) {
+    return (
+      <div 
+        style={{ fontSize: `${fontSizeScale}%` }}
+        className={`fixed inset-0 z-50 flex flex-col justify-center items-center select-none ${
+          theme === "contrast"
+            ? "bg-black text-[#FFFF00]"
+            : theme === "dark" ? "bg-[#040209] text-white" : "bg-[#f8fafc] text-slate-800"
+        }`}
+      >
+        {/* Ambient Halos */}
+        {theme !== "contrast" && (
+          <>
+            <div className="absolute w-[500px] h-[500px] rounded-full bg-blue-500/5 blur-[130px] top-[20%] pointer-events-none"></div>
+            <div className="absolute w-[400px] h-[400px] rounded-full bg-purple-500/5 blur-[110px] bottom-[20%] pointer-events-none"></div>
+          </>
+        )}
+
+        <div className="flex flex-col items-center max-w-md px-6 text-center z-10">
+          {/* Logo container with pulsing animation */}
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ 
+              scale: [1, 1.08, 1],
+              opacity: 1
+            }}
+            transition={{
+              scale: {
+                repeat: Infinity,
+                duration: 2.0,
+                ease: "easeInOut"
+              },
+              opacity: {
+                duration: 0.6
+              }
+            }}
+            className={`mb-8 p-6 rounded-[2rem] shadow-xl ${
+              theme === "contrast"
+                ? "border border-[#FFFF00] bg-black"
+                : "bg-white/5 border border-white/10 backdrop-blur-md"
+            }`}
+          >
+            <FirjanSenaiLogo className="h-16 text-white" />
+          </motion.div>
+
+          {/* Subtitle / text */}
+          <motion.h2
+            initial={{ opacity: 0, y: 15 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3, duration: 0.6 }}
+            className={`text-2xl font-black tracking-tight mb-3 font-display ${
+              theme === "contrast" ? "text-[#FFFF00]" : "bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent"
+            }`}
+          >
+            FIRJAN OneHub
+          </motion.h2>
+
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.6, duration: 0.6 }}
+            className={`text-sm font-semibold tracking-wide leading-relaxed px-4 ${
+              theme === "contrast" ? "text-[#FFFF00]" : theme === "dark" ? "text-zinc-350" : "text-slate-600"
+            }`}
+          >
+            Uma gestão conectada em um único lugar!!
+          </motion.p>
+
+          {/* Animated horizontal progress bar */}
+          <div className={`w-48 h-1 rounded-full overflow-hidden mt-10 ${
+            theme === "contrast" ? "bg-zinc-800" : "bg-zinc-800/40"
+          }`}>
+            <motion.div 
+              initial={{ width: "0%" }}
+              animate={{ width: "100%" }}
+              transition={{ duration: 10, ease: "linear" }}
+              className={`h-full ${
+                theme === "contrast" ? "bg-[#FFFF00]" : "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400"
+              }`}
+            />
+          </div>
+
+          {/* Skip splash button */}
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.7 }}
+            whileHover={{ opacity: 1 }}
+            onClick={() => setShowSplash(false)}
+            className={`mt-12 px-4 py-1.5 rounded-lg border text-[10px] font-mono font-bold tracking-wider uppercase transition cursor-pointer ${
+              theme === "contrast"
+                ? "border-[#FFFF00] text-[#FFFF00] bg-black hover:bg-[#FFFF00]/10"
+                : theme === "dark" 
+                  ? "border-zinc-800 hover:border-zinc-500 text-zinc-400 hover:text-white bg-zinc-950/20"
+                  : "border-slate-200 hover:border-slate-300 text-slate-500 hover:text-slate-800 bg-white shadow-xs"
+            }`}
+          >
+            Pular Introdução
+          </motion.button>
+        </div>
+      </div>
+    );
+  }
+
+  // Render Page Content
   if (viewParam === "presentation") {
     return (
       <HTMLPresentationView
@@ -4184,6 +4319,60 @@ export default function App() {
                   Hub Geral
                 </button>
               )}
+
+              {/* Theme Switcher Selector (Claro, Escuro, Sistema) */}
+              <div className={`flex items-center gap-1 p-0.5 rounded-lg border ${
+                theme === "dark" ? "bg-[#120F1F]/40 border-purple-500/10" : "bg-slate-50 border-slate-200"
+              }`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setThemeMode("light");
+                    addToast("Tema", "Tema Limpo (Claro) ativado", "info");
+                  }}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wide transition flex items-center gap-1 cursor-pointer ${
+                    themeMode === "light"
+                      ? "bg-[#0056C6] text-white"
+                      : "hover:bg-slate-200 text-slate-500"
+                  }`}
+                  title="Tema Limpo (Fundo Branco)"
+                >
+                  <Sun className="w-3 h-3" />
+                  <span className="hidden sm:inline">Claro</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setThemeMode("dark");
+                    addToast("Tema", "Tema Escuro ativado", "info");
+                  }}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wide transition flex items-center gap-1 cursor-pointer ${
+                    themeMode === "dark"
+                      ? "bg-[#0056C6] text-white"
+                      : "hover:bg-zinc-800 text-zinc-400"
+                  }`}
+                  title="Tema Escuro"
+                >
+                  <Moon className="w-3 h-3" />
+                  <span className="hidden sm:inline">Escuro</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setThemeMode("system");
+                    addToast("Tema", "Tema do Sistema (Automático) ativado", "info");
+                  }}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold tracking-wide transition flex items-center gap-1 cursor-pointer ${
+                    themeMode === "system"
+                      ? "bg-[#0056C6] text-white"
+                      : "hover:bg-slate-200 dark:hover:bg-zinc-800 text-zinc-400"
+                  }`}
+                  title="Tema padrão do Sistema"
+                >
+                  <Monitor className="w-3 h-3" />
+                  <span className="hidden sm:inline">Sistema</span>
+                </button>
+              </div>
 
               {/* Zerar Dados Button */}
               <button
