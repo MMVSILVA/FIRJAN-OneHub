@@ -14,6 +14,8 @@ export interface MaintenanceTicket {
   executor?: string;
   classification?: string;
   conclusionDate?: string;
+  deadline?: string;
+  autoReminder?: boolean;
 }
 
 export interface ProjectTask {

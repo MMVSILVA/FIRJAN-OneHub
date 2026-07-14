@@ -56,6 +56,7 @@ interface BudgetDashboardProps {
   setSimulatedSpentReason: (v: string) => void;
   handleSimulatedSpent: (e: React.FormEvent) => void;
   handleApproveBudgetRequest: (id: string, approve: boolean) => void;
+  requestConfirmation?: (title: string, message: string, onConfirm: () => void, critical?: boolean) => void;
 }
 
 export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
@@ -98,7 +99,8 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
   simulatedSpentReason,
   setSimulatedSpentReason,
   handleSimulatedSpent,
-  handleApproveBudgetRequest
+  handleApproveBudgetRequest,
+  requestConfirmation
 }) => {
   const [orcamentoSubView, setOrcamentoSubView] = useState<"governance" | "director-panel">("director-panel");
   const [activeDiretoriaTab, setActiveDiretoriaTab] = useState<"diretoria" | "visualizacao" | "analise" | "dados" | "razao" | "suplementacoes" | "simulador">("diretoria");
@@ -734,9 +736,20 @@ export const BudgetDashboard: React.FC<BudgetDashboardProps> = ({
   };
 
   const handleDeleteCrud = (originalIndex: number) => {
-    if (window.confirm("Deseja realmente excluir este lançamento permanentemente?")) {
+    const performDelete = () => {
       setRawDetalhes(prev => prev.filter((_, idx) => idx !== originalIndex));
-      addToast("Lançamento Excluído", "O registro foi deletado permanentemente.", "success");
+      addToast("Lançamento Excluído 🗑️", "O registro foi deletado permanentemente dos lançamentos orçamentários.", "success");
+    };
+
+    if (requestConfirmation) {
+      requestConfirmation(
+        "Excluir Lançamento Orçamentário",
+        "Atenção: Você está prestes a excluir este lançamento de dados permanentemente da planilha de detalhes. Esta ação alterará os totais orçamentários calculados.",
+        performDelete,
+        true
+      );
+    } else if (window.confirm("Deseja realmente excluir este lançamento permanentemente?")) {
+      performDelete();
     }
   };
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   ChevronLeft, ChevronRight, Wrench, FileText, X, Check, Clock, 
   AlertTriangle, DollarSign, ArrowRight, Play, CheckCircle2, ShieldCheck, Tag, Calendar,
@@ -17,9 +17,12 @@ interface MaintenanceTicket {
   description: string;
   status: "Pendente" | "Em Execução" | "Concluído";
   cost: number;
-  unit?: "SESI" | "SENAI";
+  unit?: "SESI" | "SENAI" | string;
   product?: string;
   syncStatus?: "Sincronizado" | "Pendente";
+  executor?: string;
+  deadline?: string;
+  autoReminder?: boolean;
 }
 
 interface BillingInvoice {
@@ -64,6 +67,73 @@ export default function CalendarModule({
   const [selectedDay, setSelectedDay] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<"all" | "os" | "invoice">("all");
 
+  // Synchronize calendar year and month with the imported files
+  const syncCalendarWithSpreadsheets = (showToast = true) => {
+    const dates: string[] = [];
+    maintenanceTickets.forEach(t => { if (t.date) dates.push(t.date); });
+    billingInvoices.forEach(i => {
+      if (i.dueDate) dates.push(i.dueDate);
+      if (i.issueDate) dates.push(i.issueDate);
+    });
+
+    if (dates.length === 0) {
+      if (showToast) {
+        addToast("Sincronização de Calendário", "Nenhum lançamento com data foi localizado para sincronização.", "info");
+      }
+      return;
+    }
+
+    const yearCount: { [key: number]: number } = {};
+    const monthCount: { [key: number]: number } = {};
+
+    dates.forEach(dStr => {
+      const parts = dStr.split("-");
+      if (parts.length >= 2) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1; // 0-indexed month
+        if (!isNaN(y)) yearCount[y] = (yearCount[y] || 0) + 1;
+        if (!isNaN(m)) monthCount[m] = (monthCount[m] || 0) + 1;
+      }
+    });
+
+    let bestYear = 2026;
+    let maxYearCount = 0;
+    Object.keys(yearCount).forEach(y => {
+      const year = parseInt(y, 10);
+      if (yearCount[year] > maxYearCount) {
+        maxYearCount = yearCount[year];
+        bestYear = year;
+      }
+    });
+
+    let bestMonth = 5; // Default June
+    let maxMonthCount = 0;
+    Object.keys(monthCount).forEach(m => {
+      const month = parseInt(m, 10);
+      if (monthCount[month] > maxMonthCount) {
+        maxMonthCount = monthCount[month];
+        bestMonth = month;
+      }
+    });
+
+    setCurrentYear(bestYear);
+    setCurrentMonth(bestMonth);
+    setSelectedDay(null);
+
+    if (showToast) {
+      addToast(
+        "Calendário Sincronizado",
+        `Exibindo ${MONTHS[bestMonth]} de ${bestYear} com base nos lançamentos das planilhas importadas!`,
+        "success"
+      );
+    }
+  };
+
+  // Run automatically when ticket or invoice quantities change to keep synchronized
+  useEffect(() => {
+    syncCalendarWithSpreadsheets(false);
+  }, [maintenanceTickets.length, billingInvoices.length]);
+
   // --- Reference Today Date for 24h Reminder Simulation ---
   const [simulatedToday, setSimulatedToday] = useState("2026-06-11");
 
@@ -86,9 +156,23 @@ export default function CalendarModule({
     inv => inv.status !== "Pago" && inv.dueDate === tomorrowStr
   );
 
-  // Critical (Alta priority) maintenance tickets due tomorrow
+  // Critical (Alta priority) maintenance tickets due tomorrow OR custom autoReminders due tomorrow (24h before deadline)
   const maintenanceReminders = maintenanceTickets.filter(
-    os => os.priority === "Alta" && os.status !== "Concluído" && os.date === tomorrowStr
+    os => {
+      const isClassicAlert = os.priority === "Alta" && os.status !== "Concluído" && os.date === tomorrowStr;
+      let isAutoReminderAlert = false;
+      if (os.autoReminder && os.deadline && os.status !== "Concluído") {
+        try {
+          const deadlineDate = new Date(os.deadline);
+          deadlineDate.setDate(deadlineDate.getDate() - 1);
+          const reminderDateStr = deadlineDate.toISOString().split("T")[0];
+          isAutoReminderAlert = (reminderDateStr === tomorrowStr);
+        } catch (e) {
+          isAutoReminderAlert = false;
+        }
+      }
+      return isClassicAlert || isAutoReminderAlert;
+    }
   );
 
   const totalRemindersCount = invoiceReminders.length + maintenanceReminders.length;
@@ -159,7 +243,17 @@ export default function CalendarModule({
   const getEventsForDate = (dateStr: string) => {
     const dayOS = maintenanceTickets.filter(t => t.date === dateStr);
     const dayInvoices = billingInvoices.filter(inv => inv.dueDate === dateStr);
-    return { dayOS, dayInvoices };
+    const dayReminders = maintenanceTickets.filter(t => {
+      if (!t.autoReminder || !t.deadline) return false;
+      try {
+        const d = new Date(t.deadline);
+        d.setDate(d.getDate() - 1);
+        return d.toISOString().split("T")[0] === dateStr;
+      } catch (e) {
+        return false;
+      }
+    });
+    return { dayOS, dayInvoices, dayReminders };
   };
 
   const selectedDateStr = selectedDay 
@@ -203,7 +297,17 @@ export default function CalendarModule({
         </div>
 
         {/* Month Selector Buttons */}
-        <div className="flex items-center gap-2.5 bg-zinc-900/20 p-1 rounded-xl border border-zinc-950">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => syncCalendarWithSpreadsheets(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-black uppercase tracking-wider bg-purple-600 hover:bg-purple-500 text-white rounded-xl transition-all shadow-md shadow-purple-950/20 active:scale-95 cursor-pointer"
+            title="Sincronizar datas de exibição com os lançamentos das planilhas de manutenção e faturamento"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Sincronizar Calendário
+          </button>
+
+          <div className="flex items-center gap-2.5 bg-zinc-900/20 p-1 rounded-xl border border-zinc-950">
           <button 
             onClick={handlePrevMonth}
             className="p-1.5 rounded-lg hover:bg-zinc-800/60 text-zinc-300 transition-colors cursor-pointer"
@@ -229,6 +333,7 @@ export default function CalendarModule({
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
+        </div>
       </div>
 
       {/* Main Calendar Section */}
@@ -244,7 +349,7 @@ export default function CalendarModule({
 
           <div className="grid grid-cols-7 gap-1.5">
             {cells.map((cell, idx) => {
-              const { dayOS, dayInvoices } = getEventsForDate(cell.dateStr);
+              const { dayOS, dayInvoices, dayReminders } = getEventsForDate(cell.dateStr);
               const isSelected = selectedDay === cell.day && cell.type === "current";
               const isCurrentMonth = cell.type === "current";
               
@@ -308,11 +413,24 @@ export default function CalendarModule({
                       {dayInvoices.length > 0 && (
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={`${dayInvoices.length} Faturas`} />
                       )}
+                      {dayReminders && dayReminders.length > 0 && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" title={`${dayReminders.length} Lembretes de OS (24h)`} />
+                      )}
                     </div>
                   </div>
 
                   {/* Badges / Text inside cells (desktop display) */}
                   <div className="hidden sm:block space-y-1 mt-1 text-[8.5px] font-mono leading-none">
+                    {dayReminders && dayReminders.map(os => (
+                      <div 
+                        key={`rem-${os.id}`}
+                        className="truncate p-1 rounded border flex items-center gap-0.5 font-sans bg-purple-950/30 border-purple-500/30 text-purple-300"
+                        title={`Lembrete 24h - OS: ${os.equipment} (${os.executor})`}
+                      >
+                        <Bell className="w-2 h-2 text-purple-400 animate-pulse" />
+                        <span className="font-bold">Rem: {os.id}</span>
+                      </div>
+                    ))}
                     {dayOS.slice(0, 2).map(os => (
                       <div 
                         key={os.id}
@@ -345,8 +463,8 @@ export default function CalendarModule({
                         <span className="font-semibold">{inv.id}</span>
                       </div>
                     ))}
-                    {(dayOS.length + dayInvoices.length) > 4 && (
-                      <div className="text-zinc-500 text-[8px] text-right pl-1">+{(dayOS.length + dayInvoices.length) - 4} mais</div>
+                    {(dayOS.length + dayInvoices.length + (dayReminders?.length || 0)) > 4 && (
+                      <div className="text-zinc-500 text-[8px] text-right pl-1">+{(dayOS.length + dayInvoices.length + (dayReminders?.length || 0)) - 4} mais</div>
                     )}
                   </div>
                 </div>
@@ -447,7 +565,7 @@ export default function CalendarModule({
                           <span className="text-zinc-500">Custo: R$ {os.cost}</span>
                           <button
                             onClick={() => {
-                              exportOSToPDF(os);
+                              exportOSToPDF(os as any);
                               addToast("Relatório Exportado", `O.S. ${os.id} exportada para PDF com sucesso!`, "success");
                             }}
                             className="flex items-center gap-1 text-red-400 hover:text-red-300 transition font-bold cursor-pointer"

@@ -74,6 +74,20 @@ interface BudgetEmailAlert {
   details?: string;
 }
 
+interface DispatchedLog {
+  id: string;
+  timestamp: string;
+  type: "email" | "whatsapp";
+  sender: string;
+  recipientName: string;
+  recipientContact: string;
+  subject?: string;
+  message: string;
+  status: "Enviado" | "Entregue" | "Falha";
+  urgency: "Alta" | "Média" | "Baixa";
+  module: "manutencao" | "orcamento" | "faturamento" | "geral";
+}
+
 // Logo Component: Firjan Wave Emblem Redesign (Inspired by the 3rd image style)
 export function FirjanSenaiLogo({ className = "h-12" }: { className?: string }) {
   return (
@@ -296,7 +310,145 @@ export default function App() {
   // Active view inside the system
   // For Gestor, "none" renders the "Suas Aplicações" select screen.
   // For normal users, it is forced to their service immediately.
-  const [activeSubApp, setActiveSubApp] = useState<"none" | "manutencao" | "orcamento" | "faturamento" | "calendario">("none");
+  const [activeSubApp, setActiveSubApp] = useState<"none" | "manutencao" | "orcamento" | "faturamento" | "calendario" | "notificacoes">("none");
+
+  // Notifications Log system for Email & WhatsApp (persisted)
+  const [dispatchedLogs, setDispatchedLogs] = useState<DispatchedLog[]>(() => {
+    try {
+      const saved = localStorage.getItem("onehub_dispatched_logs");
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {}
+    // Pre-populate with beautiful sample logs
+    return [
+      {
+        id: "NOT-901",
+        timestamp: "2026-06-11 08:30:00",
+        type: "email",
+        sender: "sistema@firjan.com.br",
+        recipientName: "Tatiane Teixeira Rocha",
+        recipientContact: "ttrocha@firjan.com.br",
+        subject: "[FIRJAN NOTIFICAÇÃO] Alerta de Manutenção Crítica",
+        message: "Atenção Gestora Tatiane: Foi identificada uma ordem de manutenção corretiva com PRIORIDADE ALTA para o equipamento 'Ar Condicionado Central SESI'. Status atual: Pendente.",
+        status: "Enviado",
+        urgency: "Alta",
+        module: "manutencao"
+      },
+      {
+        id: "NOT-902",
+        timestamp: "2026-06-11 08:31:00",
+        type: "whatsapp",
+        sender: "FIRJAN Alertas Bot",
+        recipientName: "Tatiane Teixeira Rocha",
+        recipientContact: "+55 (21) 98214-9428",
+        message: "⚠️ *ALERTA URGENTE (Tatiane):* Foi criada a OS-26-512 de prioridade ALTA para 'Ar Condicionado Central SESI'. Detalhe: Ruído excessivo e vazamento de gás refrigerante no Bloco B.",
+        status: "Entregue",
+        urgency: "Alta",
+        module: "manutencao"
+      },
+      {
+        id: "NOT-903",
+        timestamp: "2026-07-01 10:15:00",
+        type: "email",
+        sender: "sistema@firjan.com.br",
+        recipientName: "Marília Moreira de Melo Brito",
+        recipientContact: "mmbrito@firjan.com.br",
+        subject: "[FIRJAN ORÇAMENTO] Atualização de Centro de Custo",
+        message: "Olá Marília Moreira, o limite do Centro de Custo 'Educação Profissional' foi redefinido para R$ 1.200.000 por determinação da diretoria corporativa.",
+        status: "Enviado",
+        urgency: "Média",
+        module: "orcamento"
+      }
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem("onehub_dispatched_logs", JSON.stringify(dispatchedLogs));
+  }, [dispatchedLogs]);
+
+  const dispatchSystemNotification = (
+    actionName: string,
+    description: string,
+    urgency: "Alta" | "Média" | "Baixa",
+    module: "manutencao" | "orcamento" | "faturamento",
+    detailsText: string = ""
+  ) => {
+    const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+    const newLogs: DispatchedLog[] = [];
+
+    // 1. Identify which user is the main operator for this module
+    let operatorName = "Colaborador Firjan";
+    let operatorEmail = "sistema@firjan.com.br";
+    if (module === "manutencao") {
+      operatorName = "Thais Nicolau da Silva Ferreira";
+      operatorEmail = "tnferreira@firjan.com.br";
+    } else if (module === "orcamento") {
+      operatorName = "Marília Moreira de Melo Brito";
+      operatorEmail = "mmbrito@firjan.com.br";
+    } else if (module === "faturamento") {
+      operatorName = "Acrislei Araujo da Silva Divino";
+      operatorEmail = "adivino@firjan.com.br";
+    }
+
+    // 2. DISPATCH EMAIL TO INVOLVED USER (THETA OPERATORS)
+    const operatorEmailLog: DispatchedLog = {
+      id: `NOT-${Math.floor(1000 + Math.random() * 9000)}`,
+      timestamp,
+      type: "email",
+      sender: "sistema@firjan.com.br",
+      recipientName: operatorName,
+      recipientContact: operatorEmail,
+      subject: `[FIRJAN NOTIFICAÇÃO] ${actionName}`,
+      message: `Prezado(a) ${operatorName},\n\nInformamos que houve uma atualização no sistema do seu módulo (${module.toUpperCase()}):\n\n- Ocorrência: ${description}\n- Prioridade/Urgência: ${urgency}\n- Detalhe: ${detailsText}\n\nEste é um disparo automático para sua segurança e controle de fluxo de dados.`,
+      status: "Enviado",
+      urgency,
+      module
+    };
+    newLogs.push(operatorEmailLog);
+
+    // 3. ALWAYS NOTIFY TATIANE (GESTORA) BY EMAIL & WHATSAPP
+    // Email for Tatiane
+    const gestorEmailLog: DispatchedLog = {
+      id: `NOT-${Math.floor(1000 + Math.random() * 9000)}`,
+      timestamp,
+      type: "email",
+      sender: "sistema@firjan.com.br",
+      recipientName: "Tatiane Teixeira Rocha",
+      recipientContact: "ttrocha@firjan.com.br",
+      subject: `[FIRJAN GOVERNANÇA] Notificação de Evento: ${actionName}`,
+      message: `Prezada Tatiane (Gestora de Governança),\n\nAtualização importante e Ponto de Atenção detectado no ecossistema Firjan:\n\n- Módulo Operacional: ${module.toUpperCase()}\n- Ação / Ocorrência: ${description}\n- Urgência / Prioridade: ${urgency}\n- Pontos de Atenção / Detalhes: ${detailsText}\n- Registrado e Processado por: ${operatorName}\n\nPor favor, acesse o painel integrado para validação ou providências adicionais se necessário.`,
+      status: "Enviado",
+      urgency,
+      module
+    };
+    newLogs.push(gestorEmailLog);
+
+    // WhatsApp for Tatiane (Formatted cleanly)
+    const gestorWhatsAppLog: DispatchedLog = {
+      id: `NOT-${Math.floor(1000 + Math.random() * 9000)}`,
+      timestamp,
+      type: "whatsapp",
+      sender: "FIRJAN Alertas Bot",
+      recipientName: "Tatiane Teixeira Rocha",
+      recipientContact: "+55 (21) 98214-9428",
+      message: `🔔 *[FIRJAN ALERTA]*\n\n*Área:* ${module.toUpperCase()}\n*Evento:* ${description}\n*Urgência:* ${urgency === "Alta" ? "🚨 ALTA" : urgency === "Média" ? "⚠️ MÉDIA" : "ℹ️ BAIXA"}\n*Atenção:* ${detailsText}\n*Usuário:* ${operatorName}`,
+      status: "Entregue",
+      urgency,
+      module
+    };
+    newLogs.push(gestorWhatsAppLog);
+
+    // Add everything to dispatchedLogs
+    setDispatchedLogs(prev => [operatorEmailLog, gestorEmailLog, gestorWhatsAppLog, ...prev]);
+
+    // Show toast
+    addToast(
+      "Alertas Disparados",
+      `Notificações enviadas por E-mail para ${operatorEmail} e por E-mail/WhatsApp para a gestora Tatiane.`,
+      urgency === "Alta" ? "warning" : "success"
+    );
+  };
 
   // Offline states for robust offline-first functionality
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== "undefined" ? navigator.onLine : true);
@@ -451,9 +603,11 @@ export default function App() {
     priority: "Alta" as "Alta"|"Média"|"Baixa",
     description: "",
     cost: 500,
-    unit: "SESI",
+    unit: "SESI" as "SESI" | "SENAI",
     classification: "Elétrica",
-    executor: "Alexandre"
+    executor: "Alexandre",
+    deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+    autoReminder: true
   });
   const [showAddOSModal, setShowAddOSModal] = useState(false);
   const [osSearch, setOsSearch] = useState("");
@@ -943,6 +1097,13 @@ export default function App() {
         setRawDetalhes(rawRows);
         localStorage.setItem("onehub_rawDetalhes", JSON.stringify(rawRows));
         addToast("Sincronização Executiva YTD", `${rawRows.length} registros orçamentários consolidados no Painel da Diretoria!`, "success");
+        dispatchSystemNotification(
+          "Importação de Dados YTD",
+          "Consolidação executiva de registros orçamentários YTD",
+          "Média",
+          "orcamento",
+          `${rawRows.length} registros inseridos e vinculados ao Painel da Diretoria.`
+        );
         
         // Compile and map these detailed items dynamically into the standard costCenters state so it reflects everywhere!
         const ccMap = new Map();
@@ -1139,6 +1300,13 @@ export default function App() {
             },
             ...prev
           ]);
+          dispatchSystemNotification(
+            "Planilha de Manutenção Importada",
+            "Carga de dados consolidada para ativos de manutenção",
+            "Média",
+            "manutencao",
+            `${newTickets.length} registros de ordens de serviço foram inseridos ou atualizados.`
+          );
         }
       }
 
@@ -1218,6 +1386,13 @@ export default function App() {
             },
             ...prev
           ]);
+          dispatchSystemNotification(
+            "Planilha de Orçamento Importada",
+            "Atualização corporativa de tetos e despesas de centros de custo",
+            "Média",
+            "orcamento",
+            `${newCostCenters.length} centros de custos sincronizados no sistema.`
+          );
         }
       }
 
@@ -1300,6 +1475,13 @@ export default function App() {
             },
             ...prev
           ]);
+          dispatchSystemNotification(
+            "Planilha de Faturamento Importada",
+            "Lançamento consolidado de Notas Fiscais e Faturas emitidas",
+            "Média",
+            "faturamento",
+            `${newInvoices.length} faturas integradas de forma instantânea.`
+          );
         }
       } else {
         console.log("Arquivo carregado e parseado com sucesso, sem correspondência exata de colunas do sistema:", keys);
@@ -1536,10 +1718,39 @@ export default function App() {
       unit: newOS.unit,
       classification: newOS.classification,
       executor: newOS.executor,
-      conclusionDate: ""
+      conclusionDate: "",
+      deadline: newOS.deadline,
+      autoReminder: newOS.autoReminder
     };
 
     setMaintenanceTickets(prev => [newTicket, ...prev]);
+
+    // Dispatch automated reminder logs if checked
+    if (newOS.autoReminder && newOS.deadline) {
+      let reminderDateStr = "";
+      try {
+        const d = new Date(newOS.deadline);
+        d.setDate(d.getDate() - 1);
+        reminderDateStr = d.toISOString().split("T")[0];
+      } catch (err) {
+        reminderDateStr = new Date().toISOString().split("T")[0];
+      }
+
+      const reminderLog: DispatchedLog = {
+        id: `NOT-${Math.floor(1000 + Math.random() * 9000)}`,
+        timestamp: new Date().toISOString().replace("T", " ").substring(0, 19),
+        type: "whatsapp",
+        sender: "sistema@firjan.com.br",
+        recipientName: newOS.executor || "Alexandre",
+        recipientContact: "+55 (21) 98765-4321",
+        message: `[Lembrete de OS] Olá ${newOS.executor || "Alexandre"}, você possui um lembrete automático agendado para o dia ${reminderDateStr} (24 horas antes do prazo limite de ${newOS.deadline}) referente à OS de "${newOS.equipment}" em ${newOS.area}.`,
+        status: "Enviado",
+        urgency: "Média",
+        module: "manutencao"
+      };
+      setDispatchedLogs(prev => [reminderLog, ...prev]);
+    }
+
     setNewOS({
       equipment: "",
       area: "",
@@ -1548,7 +1759,9 @@ export default function App() {
       cost: 500,
       unit: "SESI",
       classification: "Elétrica",
-      executor: "Alexandre"
+      executor: "Alexandre",
+      deadline: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+      autoReminder: true
     });
     setShowNewOSForm(false);
     setShowAddOSModal(false);
@@ -1565,7 +1778,7 @@ export default function App() {
       // Toast alert notification
       addToast(
         "Nova OS Criada", 
-        `Equipamento ${newTicket.equipment} registrado em ${newTicket.area} por Thais Nicolau da Silva Ferreira.`, 
+        `Equipamento ${newTicket.equipment} registrado em ${newTicket.area} por Thais Nicolau da Silva Ferreira e vinculado a ${newTicket.executor}.`, 
         "success"
       );
     }
@@ -1581,6 +1794,14 @@ export default function App() {
       },
       ...prev
     ]);
+
+    dispatchSystemNotification(
+      "Abertura de Chamado de Manutenção",
+      `Abertura de OS para ${newTicket.equipment}`,
+      newTicket.priority,
+      "manutencao",
+      `Solicitado por Thais em ${newTicket.area}. Detalhes: "${newTicket.description}". Custo estimado: R$ ${newTicket.cost}.`
+    );
   };
 
   const handleUpdateOSStatus = (id: string, newStatus: "Pendente" | "Em Execução" | "Concluído") => {
@@ -1599,6 +1820,14 @@ export default function App() {
           "success"
         );
       }
+
+      dispatchSystemNotification(
+        "Status de OS Modificado",
+        `Ordem ${id} para ${targetOS.equipment} alterada para ${newStatus}`,
+        targetOS.priority,
+        "manutencao",
+        `Executado por Thais. Equipamento: ${targetOS.equipment}, Unidade: ${targetOS.unit}.`
+      );
     }
     setMaintenanceTickets(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
   };
@@ -1609,6 +1838,14 @@ export default function App() {
     setSelectedOSForModal(edited);
     setEditingOS(null);
     addToast("OS Editada", `A ordem de serviço ${edited.id} foi atualizada com sucesso!`, "success");
+
+    dispatchSystemNotification(
+      "Edição de Dados de OS",
+      `Chamado ${edited.id} modificado`,
+      edited.priority,
+      "manutencao",
+      `As especificações do ativo ${edited.equipment} foram alteradas de forma manual.`
+    );
   };
 
   const handleDeleteOS = (id: string) => {
@@ -1616,6 +1853,14 @@ export default function App() {
     setSelectedOSForModal(null);
     setEditingOS(null);
     addToast("OS Excluída 🗑️", `A ordem de serviço ${id} foi removida definitivamente do banco local!`, "success");
+
+    dispatchSystemNotification(
+      "Exclusão de OS",
+      `Ordem de serviço ${id} removida do banco`,
+      "Média",
+      "manutencao",
+      `O chamado de manutenção corretiva/preventiva foi cancelado ou removido.`
+    );
   };
 
   // HANDLERS FOR ORÇAMENTO (Marília)
@@ -1659,6 +1904,14 @@ export default function App() {
       `Nova verba de R$ ${newReq.amount.toLocaleString("pt-BR")} solicitada para ${newReq.costCenterName}.`, 
       "info"
     );
+
+    dispatchSystemNotification(
+      "Solicitação de Suplementação",
+      `Solicitação de verba complementar para ${newReq.costCenterName}`,
+      "Alta",
+      "orcamento",
+      `Requisitado por Marília Brito. Valor: R$ ${newReq.amount.toLocaleString("pt-BR")}. Motivo: "${newReq.reason}". Requer aprovação da gestora Tatiane.`
+    );
   };
 
   const handleApproveBudgetRequest = (requestId: string, approve: boolean) => {
@@ -1698,6 +1951,15 @@ export default function App() {
             "warning"
           );
         }
+
+        dispatchSystemNotification(
+          approve ? "Suplementação Aprovada" : "Suplementação Indeferida",
+          `A solicitação ${requestId} de suplementação para ${r.costCenterName} foi ${approve ? 'APROVADA' : 'RECUSADA'}`,
+          approve ? "Alta" : "Média",
+          "orcamento",
+          `Valor solicitado: R$ ${r.amount.toLocaleString("pt-BR")}. Decisão de liberação registrada por Tatiane Teixeira Rocha.`
+        );
+
         return { ...r, status: nextStatus };
       }
       return r;
@@ -1795,6 +2057,24 @@ export default function App() {
       },
       ...prev
     ]);
+
+    if (triggered95 || triggered100 || percentNum >= 95) {
+      dispatchSystemNotification(
+        "Alerta de Farol de Centro de Custo",
+        `O centro de custo ${ccName} atingiu ${percentNum}% do teto orçamentário`,
+        "Alta",
+        "orcamento",
+        `Gasto acumulado de R$ ${(foundCC ? foundCC.spent + amount : amount).toLocaleString("pt-BR")}. Alertas disparados via email para diretoria e gestora Tatiane.`
+      );
+    } else {
+      dispatchSystemNotification(
+        "Nova Despesa Registrada",
+        `Lançamento de despesa de R$ ${amount.toLocaleString("pt-BR")} no Centro de Custo ${ccName}`,
+        "Baixa",
+        "orcamento",
+        `Descrição do custeamento: "${reason}". Total realizado agora: R$ ${(foundCC ? foundCC.spent + amount : amount).toLocaleString("pt-BR")}.`
+      );
+    }
   };
 
   const handleSimulatedSpent = (e: React.FormEvent) => {
@@ -1863,6 +2143,14 @@ export default function App() {
       },
       ...prev
     ]);
+
+    dispatchSystemNotification(
+      "Nova Fatura Emitida",
+      `Emissão da Fatura ${newInvoice.id} para ${newInvoice.client}`,
+      "Média",
+      "faturamento",
+      `Valor total faturado: R$ ${newInvoice.value.toLocaleString("pt-BR")}. Vencimento: ${newInvoice.dueDate}. Serviço prestado: "${newInvoice.serviceType}".`
+    );
   };
 
   const handleExportPPTX = async () => {
@@ -2661,7 +2949,19 @@ export default function App() {
   };
 
   const handlePayInvoice = (id: string) => {
-    setBillingInvoices(prev => prev.map(inv => inv.id === id ? { ...inv, status: "Pago" } : inv));
+    setBillingInvoices(prev => prev.map(inv => {
+      if (inv.id === id) {
+        dispatchSystemNotification(
+          "Fatura Recebida / Quitada",
+          `A Fatura ${id} do cliente ${inv.client} foi quitada`,
+          "Alta",
+          "faturamento",
+          `Valor recebido de R$ ${inv.value.toLocaleString("pt-BR")}. O faturamento foi atualizado para status Pago.`
+        );
+        return { ...inv, status: "Pago" };
+      }
+      return inv;
+    }));
   };
 
   const handleSendAIMessage = (textToSend?: string) => {
@@ -4585,7 +4885,10 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
                   
                   {/* APP CARD 1: THAIS - MANUTENÇÃO */}
-                  <div className="bg-[#050408] border border-emerald-500/20 rounded-2xl p-5 hover:border-emerald-400/40 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group">
+                  <div 
+                    onClick={() => setActiveSubApp("manutencao")}
+                    className="bg-[#050408] border border-emerald-500/20 rounded-2xl p-5 hover:border-emerald-400/50 hover:-translate-y-1 hover:shadow-2xl hover:shadow-emerald-500/5 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group cursor-pointer"
+                  >
                     <div className="space-y-4">
                       {/* Colored mini icon slot */}
                       <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-450 flex items-center justify-center shrink-0">
@@ -4593,9 +4896,9 @@ export default function App() {
                       </div>
                       
                       <div>
-                        <h3 className="text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex items-center gap-2">
+                        <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex flex-wrap items-center gap-1.5">
                           Manutenção Ativos
-                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1 py-0.2 rounded">Thais</span>
+                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1.5 py-0.5 rounded shrink-0">Thais</span>
                         </h3>
                         <p className="text-xs text-slate-400 leading-relaxed font-sans">
                           Acompanhamento de ordens de manutenção, preventivas e vistorias de equipamentos do complexo industrial.
@@ -4608,7 +4911,7 @@ export default function App() {
                         {calculatedStats.activeOS} Ordens Ativas
                       </span>
                       <button 
-                        onClick={() => setActiveSubApp("manutencao")}
+                        onClick={(e) => { e.stopPropagation(); setActiveSubApp("manutencao"); }}
                         className="text-xs font-semibold text-[#00E676] group-hover:underline flex items-center gap-1 font-mono hover:text-[#00E676] transition"
                       >
                         Acessar App <ChevronRight className="w-3.5 h-3.5 shrink-0" />
@@ -4617,7 +4920,10 @@ export default function App() {
                   </div>
 
                   {/* APP CARD 2: MARÍLIA - ORÇAMENTO */}
-                  <div className="bg-[#050408] border border-purple-500/20 rounded-2xl p-5 hover:border-purple-400/40 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group">
+                  <div 
+                    onClick={() => setActiveSubApp("orcamento")}
+                    className="bg-[#050408] border border-purple-500/20 rounded-2xl p-5 hover:border-purple-400/50 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-500/5 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group cursor-pointer"
+                  >
                     <div className="space-y-4">
                       {/* Colored icon slot */}
                       <div className="w-9 h-9 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center shrink-0">
@@ -4625,9 +4931,9 @@ export default function App() {
                       </div>
 
                       <div>
-                        <h3 className="text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex items-center gap-2">
+                        <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex flex-wrap items-center gap-1.5">
                           Orçamento PMO
-                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1 py-0.2 rounded">Marília</span>
+                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1.5 py-0.5 rounded shrink-0">Marília</span>
                         </h3>
                         <p className="text-xs text-slate-400 leading-relaxed font-sans">
                           Monitoramento analítico de centros de custos logísticos, revalidação e aprovação de limites e suplementações.
@@ -4640,7 +4946,7 @@ export default function App() {
                         {calculatedStats.pendingBudgetRequests} Requisições
                       </span>
                       <button 
-                        onClick={() => setActiveSubApp("orcamento")}
+                        onClick={(e) => { e.stopPropagation(); setActiveSubApp("orcamento"); }}
                         className="text-xs font-semibold text-purple-400 group-hover:underline flex items-center gap-1 font-mono hover:text-purple-350 transition"
                       >
                         Acessar App <ChevronRight className="w-3.5 h-3.5 shrink-0" />
@@ -4649,7 +4955,10 @@ export default function App() {
                   </div>
 
                   {/* APP CARD 3: CRIS - FATURAMENTO */}
-                  <div className="bg-[#050408] border border-amber-500/20 rounded-2xl p-5 hover:border-amber-400/40 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group">
+                  <div 
+                    onClick={() => setActiveSubApp("faturamento")}
+                    className="bg-[#050408] border border-amber-500/20 rounded-2xl p-5 hover:border-amber-400/50 hover:-translate-y-1 hover:shadow-2xl hover:shadow-amber-500/5 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group cursor-pointer"
+                  >
                     <div className="space-y-4">
                       {/* Colored icon */}
                       <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
@@ -4657,9 +4966,9 @@ export default function App() {
                       </div>
 
                       <div>
-                        <h3 className="text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex items-center gap-2">
+                        <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex flex-wrap items-center gap-1.5">
                           Faturamento Core
-                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1 py-0.2 rounded">Cris</span>
+                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1.5 py-0.5 rounded shrink-0">Cris</span>
                         </h3>
                         <p className="text-xs text-slate-400 leading-relaxed font-sans">
                           Emissão de faturas, verificação de conciliações bancárias de serviços e status de parcelas em atraso.
@@ -4672,7 +4981,7 @@ export default function App() {
                         R$ {Math.round(calculatedStats.totalIssuedBilling / 1000)}k Faturado
                       </span>
                       <button 
-                        onClick={() => setActiveSubApp("faturamento")}
+                        onClick={(e) => { e.stopPropagation(); setActiveSubApp("faturamento"); }}
                         className="text-xs font-semibold text-amber-400 group-hover:underline flex items-center gap-1 font-mono hover:text-amber-300 transition"
                       >
                         Acessar App <ChevronRight className="w-3.5 h-3.5 shrink-0" />
@@ -4681,7 +4990,10 @@ export default function App() {
                   </div>
 
                   {/* APP CARD 4: CALENDÁRIO */}
-                  <div className="bg-[#050408] border border-sky-500/20 rounded-2xl p-5 hover:border-sky-400/40 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group">
+                  <div 
+                    onClick={() => setActiveSubApp("calendario")}
+                    className="bg-[#050408] border border-sky-500/20 rounded-2xl p-5 hover:border-sky-400/50 hover:-translate-y-1 hover:shadow-2xl hover:shadow-sky-500/5 transition-all duration-300 flex flex-col justify-between shadow-[0_4px_25px_rgba(4,2,9,0.3)] group cursor-pointer"
+                  >
                     <div className="space-y-4">
                       {/* Colored icon */}
                       <div className="w-9 h-9 rounded-lg bg-sky-500/10 border border-sky-500/20 flex items-center justify-center shrink-0">
@@ -4689,9 +5001,9 @@ export default function App() {
                       </div>
 
                       <div>
-                        <h3 className="text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex items-center gap-2">
+                        <h3 className="text-sm sm:text-base font-bold text-white uppercase tracking-tight font-display mb-1.5 flex flex-wrap items-center gap-1.5">
                           Calendário
-                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1 py-0.2 rounded">Prazo</span>
+                          <span className="text-[9px] font-mono text-zinc-400 lowercase border border-zinc-800 px-1.5 py-0.5 rounded shrink-0">Prazo</span>
                         </h3>
                         <p className="text-xs text-slate-400 leading-relaxed font-sans">
                           Visualização cronológica de faturas a vencer, recebimentos e limites de ordens de serviço programadas.
@@ -4704,7 +5016,7 @@ export default function App() {
                         {maintenanceTickets.length + billingInvoices.length} Eventos
                       </span>
                       <button 
-                        onClick={() => setActiveSubApp("calendario")}
+                        onClick={(e) => { e.stopPropagation(); setActiveSubApp("calendario"); }}
                         className="text-xs font-semibold text-sky-400 group-hover:underline flex items-center gap-1 font-mono hover:text-sky-300 transition"
                       >
                         Acessar App <ChevronRight className="w-3.5 h-3.5 shrink-0" />
@@ -6624,6 +6936,185 @@ export default function App() {
                   theme={theme}
                   addToast={addToast}
                 />
+              </motion.div>
+            )}
+
+            {activeSubApp === "notificacoes" && (
+              <motion.div
+                key="notificacoes-subapp"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+                className="space-y-6"
+              >
+                {/* Back button and page title */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-900/40">
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      onClick={() => setActiveSubApp("none")}
+                      className={`p-1.5 rounded-lg border transition cursor-pointer ${
+                        theme === "light"
+                          ? "bg-white border-slate-200 text-slate-800 hover:bg-slate-100"
+                          : "bg-zinc-950/40 border-zinc-800 text-zinc-400 hover:text-white"
+                      }`}
+                      title="Voltar ao Painel"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                    </button>
+                    <div>
+                      <h3 className={`text-lg font-black font-display uppercase tracking-tight flex items-center gap-2 ${
+                        theme === "light" ? "text-slate-900" : "text-white"
+                      }`}>
+                        <Bell className="w-5 h-5 text-purple-500" />
+                        Log Central de Notificações
+                      </h3>
+                      <p className={`text-xs ${
+                        theme === "light" ? "text-slate-500" : "text-zinc-400"
+                      }`}>
+                        Histórico completo de e-mails e mensagens de WhatsApp simulados, disparados automaticamente para as operadoras (Thais, Marília, Cris) e a gestora (Tatiane).
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setDispatchedLogs([]);
+                      localStorage.setItem("onehub_dispatched_logs", "[]");
+                      addToast("Limpeza Concluída", "Histórico de logs de notificações foi zerado com sucesso.", "success");
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold uppercase tracking-wider bg-rose-600 hover:bg-rose-700 text-white rounded-xl transition cursor-pointer"
+                  >
+                    🗑️ Zerar Histórico de Logs
+                  </button>
+                </div>
+
+                {/* Dashboard of notification statistics */}
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <div className={`p-4 rounded-xl border ${
+                    theme === "light" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-zinc-950/40 border-zinc-900/60 text-white"
+                  }`}>
+                    <div className="text-[10px] uppercase font-mono font-bold text-zinc-400">Total Enviado</div>
+                    <div className="text-2xl font-black mt-1 font-display">{dispatchedLogs.length}</div>
+                    <div className="text-[10px] text-zinc-500 mt-1">E-mails e WhatsApp disparados</div>
+                  </div>
+
+                  <div className={`p-4 rounded-xl border ${
+                    theme === "light" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-zinc-950/40 border-zinc-900/60 text-white"
+                  }`}>
+                    <div className="text-[10px] uppercase font-mono font-bold text-amber-400">Para Tatiane (Gestora)</div>
+                    <div className="text-2xl font-black mt-1 font-display text-emerald-400">
+                      {dispatchedLogs.filter(l => l.recipientName.includes("Tatiane") || l.recipientContact.includes("ttrocha")).length}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 mt-1">Sincronização de Gestão</div>
+                  </div>
+
+                  <div className={`p-4 rounded-xl border ${
+                    theme === "light" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-zinc-950/40 border-zinc-900/60 text-white"
+                  }`}>
+                    <div className="text-[10px] uppercase font-mono font-bold text-zinc-400">Notificações por Email</div>
+                    <div className="text-2xl font-black mt-1 font-display text-blue-400">
+                      {dispatchedLogs.filter(l => l.type === "email").length}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 mt-1">Disparos de correspondência</div>
+                  </div>
+
+                  <div className={`p-4 rounded-xl border ${
+                    theme === "light" ? "bg-slate-50 border-slate-200 text-slate-800" : "bg-zinc-950/40 border-zinc-900/60 text-white"
+                  }`}>
+                    <div className="text-[10px] uppercase font-mono font-bold text-zinc-400">Notificações por WhatsApp</div>
+                    <div className="text-2xl font-black mt-1 font-display text-emerald-400">
+                      {dispatchedLogs.filter(l => l.type === "whatsapp").length}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 mt-1">Alertas instantâneos mobile</div>
+                  </div>
+                </div>
+
+                {/* Filter Controls & List */}
+                <div className={`p-5 rounded-2xl border ${
+                  theme === "light" ? "bg-white border-slate-200 text-slate-800 shadow-sm" : "bg-zinc-950/30 border-zinc-900/60 text-white"
+                }`}>
+                  <h4 className="text-sm font-black font-display uppercase tracking-tight mb-4 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-purple-400" /> Histórico Operacional de Disparos em Tempo Real
+                  </h4>
+
+                  {dispatchedLogs.length === 0 ? (
+                    <div className="text-center py-10 space-y-3">
+                      <div className="text-4xl">📬</div>
+                      <p className="text-sm font-bold text-zinc-400">Nenhum log de notificação disparado até o momento.</p>
+                      <p className="text-xs text-zinc-500 max-w-md mx-auto">Realize alterações de status de OS, envie orçamentos, realize despesas de centro de custo ou fature lançamentos para disparar as notificações em tempo real.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {dispatchedLogs.map((log) => (
+                        <div
+                          key={log.id}
+                          className={`p-4 rounded-xl border transition-all hover:scale-[1.005] ${
+                            theme === "light"
+                              ? "bg-slate-50 hover:bg-slate-100 border-slate-200"
+                              : "bg-zinc-900/20 hover:bg-zinc-900/40 border-zinc-900/40"
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-zinc-900/20">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                                log.type === "email" ? "bg-blue-950/50 text-blue-400 border border-blue-900/30" : "bg-emerald-950/50 text-emerald-400 border border-emerald-900/30"
+                              }`}>
+                                {log.type === "email" ? "✉️ E-mail Corporativo" : "💬 WhatsApp Alerta"}
+                              </span>
+
+                              <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full ${
+                                log.urgency === "Alta" ? "bg-red-950/50 text-red-400 border border-red-900/30" :
+                                log.urgency === "Média" ? "bg-amber-950/50 text-amber-400 border border-amber-900/30" :
+                                "bg-zinc-950/50 text-zinc-400 border border-zinc-900/30"
+                              }`}>
+                                {log.urgency} Prioridade
+                              </span>
+
+                              <span className="text-[10px] font-mono text-zinc-500">
+                                Módulo: {log.module.toUpperCase()}
+                              </span>
+                            </div>
+
+                            <span className="text-[11px] font-mono text-zinc-400 font-bold">
+                              {log.timestamp}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="sm:col-span-1 space-y-1">
+                              <div className="text-[10px] uppercase font-mono font-bold text-zinc-500">Destinatário</div>
+                              <div className="text-xs font-bold text-white">{log.recipientName}</div>
+                              <div className="text-[10.5px] font-mono text-zinc-400">{log.recipientContact}</div>
+                            </div>
+
+                            <div className="sm:col-span-2 space-y-1">
+                              <div className="text-[10px] uppercase font-mono font-bold text-zinc-500">Conteúdo da Notificação</div>
+                              {log.subject && (
+                                <div className="text-xs font-extrabold text-purple-300">Assunto: {log.subject}</div>
+                              )}
+                              <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-950/35 p-2 rounded-lg border border-zinc-900/30 mt-1 font-mono">
+                                {log.message}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-2.5 flex items-center justify-between">
+                            <span className="text-[10px] font-mono text-zinc-500">
+                              ID: {log.id} • Remetente: {log.sender}
+                            </span>
+
+                            <span className="text-[10.5px] font-bold text-emerald-400 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                              {log.status === "Enviado" ? "Enviado com Sucesso" : log.status}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
               </motion.div>
             )}
 
